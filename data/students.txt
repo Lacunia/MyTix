@@ -1,0 +1,4 @@
+1	Alice	alice@school.com	2000-03-10	3.85
+2	Bob	bob@school.com	1999-07-22	3.20
+3	Carol	carol@school.com	2001-11-05	3.60
+4	David	david@school.com	2000-01-18	2.90

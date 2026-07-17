@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS enrollment;
+DROP TABLE IF EXISTS course;
+DROP TABLE IF EXISTS student;
