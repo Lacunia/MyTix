@@ -1,0 +1,7 @@
+# Handle line endings automatically for text files
+* text=auto eol=lf
+
+# Explicitly ensure shell scripts and SQL files always use Linux LF endings
+*.sh text eol=lf
+*.sql text eol=lf
+*.java text eol=lf
