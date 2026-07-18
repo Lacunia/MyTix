@@ -1,90 +1,107 @@
-DROP TABLE IF EXISTS Venues;
-DROP TABLE IF EXISTS Taxonomy;
-DROP TABLE IF EXISTS Users;
-DROP TABLE IF EXISTS Customers;
-DROP TABLE IF EXISTS Organizers;
+-- ============================================================================
+-- DROP TABLES
+-- ============================================================================
+
+DROP TABLE IF EXISTS Comments;
+DROP TABLE IF EXISTS ResaleListings;
+DROP TABLE IF EXISTS TicketOwnershipHistory;
+DROP TABLE IF EXISTS Tickets;
+DROP TABLE IF EXISTS Orders;
+DROP TABLE IF EXISTS BlockedSeats;
+DROP TABLE IF EXISTS PerformanceSectionAssignments;
+DROP TABLE IF EXISTS PriceTiers;
+DROP TABLE IF EXISTS Performances;
+DROP TABLE IF EXISTS EventLineups;
 DROP TABLE IF EXISTS Events;
 DROP TABLE IF EXISTS Artists;
-DROP TABLE IF EXISTS EventLineups;
-DROP TABLE IF EXISTS Sections;
-DROP TABLE IF EXISTS Rows;
 DROP TABLE IF EXISTS Seats;
-DROP TABLE IF EXISTS Performances;
-DROP TABLE IF EXISTS PriceTiers;
-
--- ============================================================================
--- ENUM TYPES
--- ============================================================================
-
-CREATE TYPE billing_order_enum AS ENUM ('Headliner', 'Special guest', 'Opening act');
-CREATE TYPE performance_status_enum AS ENUM ('Scheduled', 'Cancelled');
-CREATE TYPE account_type_enum AS ENUM ('Customer', 'Organizer');
-CREATE TYPE ticket_status_enum AS ENUM ('Active', 'Cancelled by customer', 'Cancelled by organizer');
-CREATE TYPE listing_status_enum AS ENUM ('Active', 'Sold', 'Withdrawn');
+DROP TABLE IF EXISTS SectionRows;
+DROP TABLE IF EXISTS Sections;
+DROP TABLE IF EXISTS Venues;
+DROP TABLE IF EXISTS PaymentMethods;
+DROP TABLE IF EXISTS Organizers;
+DROP TABLE IF EXISTS Customers;
+DROP TABLE IF EXISTS Users;
+DROP TABLE IF EXISTS Taxonomy;
 
 -- ============================================================================
 -- USERS & ACCOUNT SUBCLASSES
 -- ============================================================================
 
 CREATE TABLE Users (
-    userId SERIAL PRIMARY KEY,
+    userId INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     address VARCHAR(255) NOT NULL,
     dateOfBirth DATE NOT NULL,
-    accountType account_type_enum NOT NULL DEFAULT 'Customer',
+    accountType ENUM('Customer', 'Organizer') NOT NULL DEFAULT 'Customer',
+
     -- Ensures users are at least 18 years old to open an account
-    CONSTRAINT chk_minimum_age CHECK (dateOfBirth <= CURRENT_DATE - INTERVAL '18 years')
+    CONSTRAINT chk_minimum_age CHECK (dateOfBirth <= CURDATE() - INTERVAL 18 YEAR)
 );
 
 CREATE TABLE Customers (
-    customerId INT PRIMARY KEY REFERENCES Users(userId) ON DELETE CASCADE,
-    paymentId INT NOT NULL REFERENCES PaymentMethods(paymentId) ON DELETE CASCADE
-);
+    customerId INT PRIMARY KEY,
 
-CREATE TABLE Organizers (
-    organizerId INT PRIMARY KEY REFERENCES Users(userId) ON DELETE CASCADE
+    CONSTRAINT fk_customers_user FOREIGN KEY (customerId) REFERENCES Users(userId) ON DELETE CASCADE
 );
 
 CREATE TABLE PaymentMethods (
-    paymentId SERIAL PRIMARY KEY,
-    customerId INT NOT NULL REFERENCES Customers(customerId) ON DELETE CASCADE,
+    paymentId INT AUTO_INCREMENT PRIMARY KEY,
+    customerId INT NOT NULL,
     cardholderName VARCHAR(255) NOT NULL,
     cardNumber VARCHAR(19) NOT NULL,
     expiryDate CHAR(5) NOT NULL,
+
+    CONSTRAINT fk_paymentmethods_customer FOREIGN KEY (customerId) REFERENCES Customers(customerId) ON DELETE CASCADE
+);
+
+CREATE TABLE Organizers (
+    organizerId INT PRIMARY KEY,
+
+    CONSTRAINT fk_organizers_user FOREIGN KEY (organizerId) REFERENCES Users(userId) ON DELETE CASCADE
 );
 
 -- ============================================================================
--- EVENTS & LINEUPS
+-- TAXONOMY, EVENTS & LINEUPS
 -- ============================================================================
-
-CREATE TABLE Events (
-    eventId SERIAL PRIMARY KEY,
-    organizerId INT NOT NULL REFERENCES Organizers(organizerId),
-    taxonomyId INT NOT NULL REFERENCES Taxonomy(taxonomyId),
-    title VARCHAR(255),
-    description TEXT,
-    resalePriceCap DECIMAL(5,2) NOT NULL DEFAULT 1.20 CHECK (amount >= 0) 
-    -- e.g., 1.20 equals 120% cap
-);
 
 CREATE TABLE Taxonomy (
-    taxonomyId SERIAL PRIMARY KEY,
+    taxonomyId INT AUTO_INCREMENT PRIMARY KEY,
     segment VARCHAR(100) NOT NULL,
     genre VARCHAR(100) NOT NULL,
+
     CONSTRAINT unique_segment_genre UNIQUE (segment, genre)
 );
 
+CREATE TABLE Events (
+    eventId INT AUTO_INCREMENT PRIMARY KEY,
+    organizerId INT NOT NULL,
+    taxonomyId INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    -- e.g., 1.20 equals 120% cap
+    resalePriceCap DECIMAL(5,2) NOT NULL DEFAULT 1.20,
+
+    CONSTRAINT fk_events_organizer FOREIGN KEY (organizerId) REFERENCES Organizers(organizerId),
+    CONSTRAINT fk_events_taxonomy FOREIGN KEY (taxonomyId) REFERENCES Taxonomy(taxonomyId),
+    -- A cap below 1.00 (100% of face value) would make resale impossible
+    CONSTRAINT chk_resale_price_cap_non_neg CHECK (resalePriceCap >= 1.00)
+);
+
 CREATE TABLE Artists (
-    artistId SERIAL PRIMARY KEY,
+    artistId INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL
 );
 
 CREATE TABLE EventLineups (
-    artistId INT REFERENCES Artists(artistId) ON DELETE CASCADE,
-    eventId INT REFERENCES Events(eventId) ON DELETE CASCADE,
-    billingOrder billing_order_enum NOT NULL,
-    PRIMARY KEY (artistId, eventId)
+    artistId INT NOT NULL,
+    eventId INT NOT NULL,
+    billingOrder ENUM('Headliner', 'Special guest', 'Opening act') NOT NULL,
+
+    PRIMARY KEY (artistId, eventId),
+    CONSTRAINT fk_eventlineups_artist FOREIGN KEY (artistId) REFERENCES Artists(artistId) ON DELETE CASCADE,
+    CONSTRAINT fk_eventlineups_event FOREIGN KEY (eventId) REFERENCES Events(eventId) ON DELETE CASCADE
 );
 
 -- ============================================================================
@@ -92,7 +109,7 @@ CREATE TABLE EventLineups (
 -- ============================================================================
 
 CREATE TABLE Venues (
-    venueId SERIAL PRIMARY KEY,
+    venueId INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     latitude DECIMAL(9,6) NOT NULL,
     longitude DECIMAL(9,6) NOT NULL,
@@ -103,30 +120,37 @@ CREATE TABLE Venues (
 );
 
 CREATE TABLE Sections (
-    sectionId SERIAL PRIMARY KEY,
-    venueId INT NOT NULL REFERENCES Venues(venueId) ON DELETE CASCADE,
+    sectionId INT AUTO_INCREMENT PRIMARY KEY,
+    venueId INT NOT NULL,
     sectionName VARCHAR(100) NOT NULL,
     isReservedSeating BOOLEAN NOT NULL,
     standingCapacity INT,
+
+    CONSTRAINT fk_sections_venue FOREIGN KEY (venueId) REFERENCES Venues(venueId) ON DELETE CASCADE,
     CONSTRAINT unique_venue_section UNIQUE (venueId, sectionName),
+
     -- If reserved seating is TRUE, standing capacity must be NULL. Otherwise, it must be provided.
     CONSTRAINT chk_standing_capacity CHECK (
         (isReservedSeating = TRUE AND standingCapacity IS NULL) OR
-        (isReservedSeating = FALSE AND standingCapacity IS NOT NULL)
+        (isReservedSeating = FALSE AND standingCapacity IS NOT NULL AND standingCapacity > 0)
     )
 );
 
-CREATE TABLE Rows (
-    rowId SERIAL PRIMARY KEY,
-    sectionId INT NOT NULL REFERENCES Sections(sectionId) ON DELETE CASCADE,
+CREATE TABLE SectionRows (
+    rowId INT AUTO_INCREMENT PRIMARY KEY,
+    sectionId INT NOT NULL,
     rowName VARCHAR(50) NOT NULL,
+
+    CONSTRAINT fk_rows_section FOREIGN KEY (sectionId) REFERENCES Sections(sectionId) ON DELETE CASCADE,
     CONSTRAINT unique_section_row UNIQUE (sectionId, rowName)
 );
 
 CREATE TABLE Seats (
-    seatId SERIAL PRIMARY KEY,
-    rowId INT NOT NULL REFERENCES Rows(rowId) ON DELETE CASCADE,
+    seatId INT AUTO_INCREMENT PRIMARY KEY,
+    rowId INT NOT NULL,
     seatNumber INT NOT NULL,
+
+    CONSTRAINT fk_seats_row FOREIGN KEY (rowId) REFERENCES SectionRows(rowId) ON DELETE CASCADE,
     CONSTRAINT unique_row_seat UNIQUE (rowId, seatNumber)
 );
 
@@ -135,33 +159,46 @@ CREATE TABLE Seats (
 -- ============================================================================
 
 CREATE TABLE Performances (
-    performanceId SERIAL PRIMARY KEY,
-    eventId INT NOT NULL REFERENCES Events(eventId) ON DELETE RESTRICT,
-    venueId INT NOT NULL REFERENCES Venues(venueId) ON DELETE RESTRICT,
-    dateTime TIMESTAMP NOT NULL,
-    status performance_status_enum NOT NULL DEFAULT 'Scheduled'
+    performanceId INT AUTO_INCREMENT PRIMARY KEY,
+    eventId INT NOT NULL,
+    venueId INT NOT NULL,
+    dateTime DATETIME NOT NULL,
+    status ENUM('Scheduled', 'Cancelled') NOT NULL DEFAULT 'Scheduled',
+
+    CONSTRAINT fk_performances_event FOREIGN KEY (eventId) REFERENCES Events(eventId) ON DELETE RESTRICT,
+    CONSTRAINT fk_performances_venue FOREIGN KEY (venueId) REFERENCES Venues(venueId) ON DELETE RESTRICT
 );
 
 CREATE TABLE PriceTiers (
-    tierId SERIAL PRIMARY KEY,
-    performanceId INT NOT NULL REFERENCES Performances(performanceId) ON DELETE CASCADE,
+    tierId INT AUTO_INCREMENT PRIMARY KEY,
+    performanceId INT NOT NULL,
     tierName VARCHAR(100) NOT NULL,
-    price DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
-    CONSTRAINT unique_performance_tier UNIQUE (performanceId, tierName)
+    price DECIMAL(10,2) NOT NULL,
+
+    CONSTRAINT fk_pricetiers_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId) ON DELETE CASCADE,
+    CONSTRAINT unique_performance_tier UNIQUE (performanceId, tierName),
+    CONSTRAINT chk_tier_price_non_neg CHECK (price >= 0)
 );
 
 CREATE TABLE PerformanceSectionAssignments (
-    sectionId INT REFERENCES Sections(sectionId) ON DELETE RESTRICT,
-    performanceId INT REFERENCES Performances(performanceId) ON DELETE CASCADE,
-    tierId INT NOT NULL REFERENCES PriceTiers(tierId) ON DELETE RESTRICT,
-    PRIMARY KEY (sectionId, performanceId)
+    sectionId INT NOT NULL,
+    performanceId INT NOT NULL,
+    tierId INT NOT NULL,
+
+    PRIMARY KEY (sectionId, performanceId),
+    CONSTRAINT fk_psa_section FOREIGN KEY (sectionId) REFERENCES Sections(sectionId) ON DELETE RESTRICT,
+    CONSTRAINT fk_psa_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId) ON DELETE CASCADE,
+    CONSTRAINT fk_psa_tier FOREIGN KEY (tierId) REFERENCES PriceTiers(tierId) ON DELETE RESTRICT
 );
 
 CREATE TABLE BlockedSeats (
-    performanceId INT REFERENCES Performances(performanceId) ON DELETE CASCADE,
-    seatId INT REFERENCES Seats(seatId) ON DELETE CASCADE,
+    performanceId INT NOT NULL,
+    seatId INT NOT NULL,
     reason VARCHAR(255),
-    PRIMARY KEY (performanceId, seatId)
+
+    PRIMARY KEY (performanceId, seatId),
+    CONSTRAINT fk_blockedseats_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId) ON DELETE CASCADE,
+    CONSTRAINT fk_blockedseats_seat FOREIGN KEY (seatId) REFERENCES Seats(seatId) ON DELETE CASCADE
 );
 
 -- ============================================================================
@@ -169,43 +206,66 @@ CREATE TABLE BlockedSeats (
 -- ============================================================================
 
 CREATE TABLE Orders (
-    orderId SERIAL PRIMARY KEY,
-    customerId INT NOT NULL REFERENCES Customers(customerId),
-    performanceId INT NOT NULL REFERENCES Performances(performanceId),
-    purchaseTime TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    paymentId INT NOT NULL REFERENCES Customers(paymentId),
-    totalPaid DECIMAL(10,2) NOT NULL
+    orderId INT AUTO_INCREMENT PRIMARY KEY,
+    customerId INT NOT NULL,
+    performanceId INT NOT NULL,
+    paymentId INT NOT NULL,
+    purchaseTime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    totalPaid DECIMAL(10,2) NOT NULL,
+
+    CONSTRAINT fk_orders_customer FOREIGN KEY (customerId) REFERENCES Customers(customerId),
+    CONSTRAINT fk_orders_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId),
+    CONSTRAINT fk_orders_payment FOREIGN KEY (paymentId) REFERENCES PaymentMethods(paymentId),
+    CONSTRAINT chk_orders_totalpaid_non_neg CHECK (totalPaid >= 0)
 );
 
 CREATE TABLE Tickets (
-    ticketId SERIAL PRIMARY KEY,
-    orderId INT NOT NULL REFERENCES Orders(orderId),
-    performanceId INT NOT NULL REFERENCES Performances(performanceId),
-    sectionId INT NOT NULL REFERENCES Sections(sectionId),
-    seatId INT REFERENCES Seats(seatId), -- Nullable for general admission / standing
-    price DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
-    currentOwnerId INT NOT NULL REFERENCES Customers(customerId),
-    status ticket_status_enum NOT NULL DEFAULT 'Active'
+    ticketId INT AUTO_INCREMENT PRIMARY KEY,
+    orderId INT NOT NULL,
+    performanceId INT NOT NULL,
+    sectionId INT NOT NULL,
+    seatId INT, -- Nullable for general admission / standing
+    price DECIMAL(10,2) NOT NULL,
+    currentOwnerId INT NOT NULL,
+    status ENUM('Active', 'Cancelled by customer', 'Cancelled by organizer') NOT NULL DEFAULT 'Active',
+
+    CONSTRAINT fk_tickets_order FOREIGN KEY (orderId) REFERENCES Orders(orderId),
+    CONSTRAINT fk_tickets_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId),
+    CONSTRAINT fk_tickets_section FOREIGN KEY (sectionId) REFERENCES Sections(sectionId),
+    CONSTRAINT fk_tickets_seat FOREIGN KEY (seatId) REFERENCES Seats(seatId),
+    CONSTRAINT fk_tickets_owner FOREIGN KEY (currentOwnerId) REFERENCES Customers(customerId),
+    -- A given seat can be sold at most once per performance
+    CONSTRAINT unique_seat_per_performance UNIQUE (performanceId, seatId),
+    CONSTRAINT chk_ticket_price_non_neg CHECK (price >= 0)
 );
 
 CREATE TABLE TicketOwnershipHistory (
-    historyId SERIAL PRIMARY KEY,
-    ticketId INT NOT NULL REFERENCES Tickets(ticketId) ON DELETE CASCADE,
-    sellerId INT NOT NULL REFERENCES Customers(customerId),
-    buyerId INT NOT NULL REFERENCES Customers(customerId),
-    transactionPrice DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
-    transactionDate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    historyId INT AUTO_INCREMENT PRIMARY KEY,
+    ticketId INT NOT NULL,
+    sellerId INT NOT NULL,
+    buyerId INT NOT NULL,
+    transactionPrice DECIMAL(10,2) NOT NULL,
+    transactionDate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_toh_ticket FOREIGN KEY (ticketId) REFERENCES Tickets(ticketId) ON DELETE CASCADE,
+    CONSTRAINT fk_toh_seller FOREIGN KEY (sellerId) REFERENCES Customers(customerId),
+    CONSTRAINT fk_toh_buyer FOREIGN KEY (buyerId) REFERENCES Customers(customerId),
+    CONSTRAINT chk_trxn_price_non_neg CHECK (transactionPrice >= 0)
 );
 
 CREATE TABLE ResaleListings (
-    listingId SERIAL PRIMARY KEY,
-    ticketId INT NOT NULL REFERENCES Tickets(ticketId) ON DELETE CASCADE,
-    sellerId INT NOT NULL REFERENCES Customers(customerId),
-    resalePrice DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
-    postedDate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    status listing_status_enum NOT NULL DEFAULT 'Active'
-    -- Note: The 120% price cap constraint is dynamic relative to the original ticket price. 
-    -- This is strictly enforced via an application-level business check or a database BEFORE INSERT trigger.
+    listingId INT AUTO_INCREMENT PRIMARY KEY,
+    ticketId INT NOT NULL,
+    sellerId INT NOT NULL,
+    resalePrice DECIMAL(10,2) NOT NULL,
+    postedDate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('Active', 'Sold', 'Withdrawn') NOT NULL DEFAULT 'Active',
+    -- Note: The price cap constraint is dynamic relative to the original ticket's face
+    -- value and the event's resalePriceCap.
+
+    CONSTRAINT fk_resalelistings_ticket FOREIGN KEY (ticketId) REFERENCES Tickets(ticketId) ON DELETE CASCADE,
+    CONSTRAINT fk_resalelistings_seller FOREIGN KEY (sellerId) REFERENCES Customers(customerId),
+    CONSTRAINT chk_resale_price_non_neg CHECK (resalePrice >= 0)
 );
 
 -- ============================================================================
@@ -213,14 +273,20 @@ CREATE TABLE ResaleListings (
 -- ============================================================================
 
 CREATE TABLE Comments (
-    commentId SERIAL PRIMARY KEY,
-    customerId INT NOT NULL REFERENCES Customers(customerId) ON DELETE CASCADE,
-    eventId INT NOT NULL REFERENCES Events(eventId) ON DELETE CASCADE,
-    venueId INT NOT NULL REFERENCES Venues(venueId) ON DELETE CASCADE,
+    commentId INT AUTO_INCREMENT PRIMARY KEY,
+    customerId INT NOT NULL,
+    performanceId INT NOT NULL,
     content TEXT NOT NULL,
-    eventRating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    venueRating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    CONSTRAINT unique_user_performance_review UNIQUE (userId, eventId)
-    -- Additional dynamic parameters (verifying they attended the event, that the performance is in the past,
-    -- and that their ticket status was not cancelled) should be handled via a conditional API layer or dynamic SQL triggers.
+    eventRating INT NOT NULL,
+    venueRating INT NOT NULL,
+
+    CONSTRAINT fk_comments_customer FOREIGN KEY (customerId) REFERENCES Customers(customerId) ON DELETE CASCADE,
+    CONSTRAINT fk_comments_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId) ON DELETE CASCADE,
+    -- The event and venue being rated are derived via performanceId -> Events / Venues,
+    -- so "at most once per performance attended" is a single UNIQUE key here.
+    CONSTRAINT unique_customer_performance_review UNIQUE (customerId, performanceId),
+    CONSTRAINT chk_comments_event_rating CHECK (eventRating BETWEEN 1 AND 5),
+    CONSTRAINT chk_comments_venue_rating CHECK (venueRating BETWEEN 1 AND 5)
+    -- Additional dynamic parameters (verifying they attended the performance, that it
+    -- has taken place, and that their ticket status was not cancelled) is handled from backend.
 );
