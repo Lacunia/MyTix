@@ -15,33 +15,12 @@ DROP TABLE IF EXISTS PriceTiers;
 -- ============================================================================
 -- ENUM TYPES
 -- ============================================================================
+
 CREATE TYPE billing_order_enum AS ENUM ('Headliner', 'Special guest', 'Opening act');
 CREATE TYPE performance_status_enum AS ENUM ('Scheduled', 'Cancelled');
 CREATE TYPE account_type_enum AS ENUM ('Customer', 'Organizer');
 CREATE TYPE ticket_status_enum AS ENUM ('Active', 'Cancelled by customer', 'Cancelled by organizer');
 CREATE TYPE listing_status_enum AS ENUM ('Active', 'Sold', 'Withdrawn');
-
--- ============================================================================
--- CORE ENTITIES & TAXONOMY
--- ============================================================================
-
-CREATE TABLE Venues (
-    venueId SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    latitude DECIMAL(9,6) NOT NULL,
-    longitude DECIMAL(9,6) NOT NULL,
-    address VARCHAR(255) NOT NULL,
-    postalCode VARCHAR(20) NOT NULL,
-    city VARCHAR(100) NOT NULL,
-    country VARCHAR(100) NOT NULL
-);
-
-CREATE TABLE Taxonomy (
-    taxonomyId SERIAL PRIMARY KEY,
-    segment VARCHAR(100) NOT NULL,
-    genre VARCHAR(100) NOT NULL,
-    CONSTRAINT unique_segment_genre UNIQUE (segment, genre)
-);
 
 -- ============================================================================
 -- USERS & ACCOUNT SUBCLASSES
@@ -60,11 +39,19 @@ CREATE TABLE Users (
 
 CREATE TABLE Customers (
     customerId INT PRIMARY KEY REFERENCES Users(userId) ON DELETE CASCADE,
-    creditCardInfo VARCHAR(255) NOT NULL
+    paymentId INT NOT NULL REFERENCES PaymentMethods(paymentId) ON DELETE CASCADE
 );
 
 CREATE TABLE Organizers (
     organizerId INT PRIMARY KEY REFERENCES Users(userId) ON DELETE CASCADE
+);
+
+CREATE TABLE PaymentMethods (
+    paymentId SERIAL PRIMARY KEY,
+    customerId INT NOT NULL REFERENCES Customers(customerId) ON DELETE CASCADE,
+    cardholderName VARCHAR(255) NOT NULL,
+    cardNumber VARCHAR(19) NOT NULL,
+    expiryDate CHAR(5) NOT NULL,
 );
 
 -- ============================================================================
@@ -77,7 +64,15 @@ CREATE TABLE Events (
     taxonomyId INT NOT NULL REFERENCES Taxonomy(taxonomyId),
     title VARCHAR(255),
     description TEXT,
-    resalePriceCap DECIMAL(5,2) NOT NULL DEFAULT 1.20 -- e.g., 1.20 equals 120% cap
+    resalePriceCap DECIMAL(5,2) NOT NULL DEFAULT 1.20 CHECK (amount >= 0) 
+    -- e.g., 1.20 equals 120% cap
+);
+
+CREATE TABLE Taxonomy (
+    taxonomyId SERIAL PRIMARY KEY,
+    segment VARCHAR(100) NOT NULL,
+    genre VARCHAR(100) NOT NULL,
+    CONSTRAINT unique_segment_genre UNIQUE (segment, genre)
 );
 
 CREATE TABLE Artists (
@@ -95,6 +90,17 @@ CREATE TABLE EventLineups (
 -- ============================================================================
 -- PHYSICAL VENUE LAYOUT (SEATING)
 -- ============================================================================
+
+CREATE TABLE Venues (
+    venueId SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    latitude DECIMAL(9,6) NOT NULL,
+    longitude DECIMAL(9,6) NOT NULL,
+    address VARCHAR(255) NOT NULL,
+    postalCode VARCHAR(20) NOT NULL,
+    city VARCHAR(100) NOT NULL,
+    country VARCHAR(100) NOT NULL
+);
 
 CREATE TABLE Sections (
     sectionId SERIAL PRIMARY KEY,
@@ -125,7 +131,7 @@ CREATE TABLE Seats (
 );
 
 -- ============================================================================
--- PERFORMANCES, PRICING & SEAT INVENTORIES
+-- PERFORMANCES, PRICING & SEAT AVAILABILITY
 -- ============================================================================
 
 CREATE TABLE Performances (
@@ -140,7 +146,7 @@ CREATE TABLE PriceTiers (
     tierId SERIAL PRIMARY KEY,
     performanceId INT NOT NULL REFERENCES Performances(performanceId) ON DELETE CASCADE,
     tierName VARCHAR(100) NOT NULL,
-    price DECIMAL(10,2) NOT NULL,
+    price DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
     CONSTRAINT unique_performance_tier UNIQUE (performanceId, tierName)
 );
 
@@ -159,7 +165,7 @@ CREATE TABLE BlockedSeats (
 );
 
 -- ============================================================================
--- COMMERCE: ORDERS, TICKETS & RESALE
+-- ORDERS, TICKETS & RESALE
 -- ============================================================================
 
 CREATE TABLE Orders (
@@ -167,11 +173,9 @@ CREATE TABLE Orders (
     customerId INT NOT NULL REFERENCES Customers(customerId),
     performanceId INT NOT NULL REFERENCES Performances(performanceId),
     purchaseTime TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    -- paymentMethodUsed VARCHAR(255) NOT NULL REFERENCES Customers(creditCardInfo),
+    paymentId INT NOT NULL REFERENCES Customers(paymentId),
     totalPaid DECIMAL(10,2) NOT NULL
 );
-
--- review from here
 
 CREATE TABLE Tickets (
     ticketId SERIAL PRIMARY KEY,
@@ -179,7 +183,7 @@ CREATE TABLE Tickets (
     performanceId INT NOT NULL REFERENCES Performances(performanceId),
     sectionId INT NOT NULL REFERENCES Sections(sectionId),
     seatId INT REFERENCES Seats(seatId), -- Nullable for general admission / standing
-    price DECIMAL(10,2) NOT NULL,
+    price DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
     currentOwnerId INT NOT NULL REFERENCES Customers(customerId),
     status ticket_status_enum NOT NULL DEFAULT 'Active'
 );
@@ -189,7 +193,7 @@ CREATE TABLE TicketOwnershipHistory (
     ticketId INT NOT NULL REFERENCES Tickets(ticketId) ON DELETE CASCADE,
     sellerId INT NOT NULL REFERENCES Customers(customerId),
     buyerId INT NOT NULL REFERENCES Customers(customerId),
-    transactionPrice DECIMAL(10,2) NOT NULL,
+    transactionPrice DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
     transactionDate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -197,7 +201,7 @@ CREATE TABLE ResaleListings (
     listingId SERIAL PRIMARY KEY,
     ticketId INT NOT NULL REFERENCES Tickets(ticketId) ON DELETE CASCADE,
     sellerId INT NOT NULL REFERENCES Customers(customerId),
-    resalePrice DECIMAL(10,2) NOT NULL,
+    resalePrice DECIMAL(10,2) NOT NULL CHECK (amount >= 0),
     postedDate TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status listing_status_enum NOT NULL DEFAULT 'Active'
     -- Note: The 120% price cap constraint is dynamic relative to the original ticket price. 
@@ -205,15 +209,17 @@ CREATE TABLE ResaleListings (
 );
 
 -- ============================================================================
--- USER ENGAGEMENT
+-- USER INTERACTION
 -- ============================================================================
 
 CREATE TABLE Comments (
     commentId SERIAL PRIMARY KEY,
-    userId INT NOT NULL REFERENCES Users(userId) ON DELETE CASCADE,
+    customerId INT NOT NULL REFERENCES Customers(customerId) ON DELETE CASCADE,
     eventId INT NOT NULL REFERENCES Events(eventId) ON DELETE CASCADE,
+    venueId INT NOT NULL REFERENCES Venues(venueId) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    eventRating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    venueRating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
     CONSTRAINT unique_user_performance_review UNIQUE (userId, eventId)
     -- Additional dynamic parameters (verifying they attended the event, that the performance is in the past,
     -- and that their ticket status was not cancelled) should be handled via a conditional API layer or dynamic SQL triggers.
