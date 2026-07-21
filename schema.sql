@@ -1,5 +1,5 @@
 -- ============================================================================
--- DROP TABLES
+-- DROP TRIGGERS & TABLES
 -- ============================================================================
 
 DROP TABLE IF EXISTS Comments;
@@ -23,6 +23,10 @@ DROP TABLE IF EXISTS Organizers;
 DROP TABLE IF EXISTS Customers;
 DROP TABLE IF EXISTS Users;
 DROP TABLE IF EXISTS Taxonomy;
+
+DROP TRIGGER trg_section_venue_match
+DROP TRIGGER trg_resale_price_cap
+DROP TRIGGER trg_ticket_seat_consistency
 
 -- ============================================================================
 -- USERS & ACCOUNT SUBCLASSES
@@ -290,3 +294,73 @@ CREATE TABLE Comments (
     -- Additional dynamic parameters (verifying they attended the performance, that it
     -- has taken place, and that their ticket status was not cancelled) is handled from backend.
 );
+
+-- ============================================================================
+-- TRIGGERS
+-- ============================================================================
+
+-- A section can only be assigned a price tier for a performance that is actually
+-- held at the section's own venue.
+-- - Below, for PerformanceSectionAssignments, we check that the section's venueId
+--   matches the performance's venueId.
+CREATE TRIGGER trg_section_venue_match
+BEFORE INSERT ON PerformanceSectionAssignments
+FOR EACH ROW
+BEGIN
+    DECLARE sectionVenueId INT;
+    DECLARE performanceVenueId INT;
+
+    SELECT venueId INTO sectionVenueId 
+    FROM Sections 
+    WHERE sectionId = NEW.sectionId;
+
+    SELECT venueId INTO performanceVenueId 
+    FROM Performances 
+    WHERE performanceId = NEW.performanceId;
+
+    IF sectionVenueId IS NULL OR performanceVenueId IS NULL OR sectionVenueId <> performanceVenueId THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Section does not belong to the venue of this performance';
+    END IF;
+END$$
+
+-- A resale listing's price cannot exceed the event's resale cap applied to the
+-- ticket's original face value.
+CREATE TRIGGER trg_resale_price_cap
+BEFORE INSERT ON ResaleListings
+FOR EACH ROW
+BEGIN
+    DECLARE faceValue DECIMAL(10,2);
+    DECLARE cap DECIMAL(5,2);
+
+    SELECT t.price, e.resalePriceCap INTO faceValue, cap
+    FROM Tickets t
+    JOIN Performances p ON t.performanceId = p.performanceId
+    JOIN Events e ON p.eventId = e.eventId
+    WHERE t.ticketId = NEW.ticketId;
+
+    IF NEW.resalePrice > faceValue * cap THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Resale price exceeds the resale cap for this event';
+    END IF;
+END$$
+
+-- A ticket must have a seatId if and only if its section is reserved seating.
+CREATE TRIGGER trg_ticket_seat_consistency
+BEFORE INSERT ON Tickets
+FOR EACH ROW
+BEGIN
+    DECLARE reservedSeating BOOLEAN;
+
+    SELECT isReservedSeating INTO reservedSeating 
+    FROM Sections 
+    WHERE sectionId = NEW.sectionId;
+
+    IF reservedSeating = TRUE AND NEW.seatId IS NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'A reserved-seating ticket must specify a seat';
+    ELSEIF reservedSeating = FALSE AND NEW.seatId IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'A general-admission ticket must not specify a seat';
+    END IF;
+END$$
