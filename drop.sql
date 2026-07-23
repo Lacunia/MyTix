@@ -1,5 +1,9 @@
--- Drop tables in dependency order (children before parents)
--- so MySQL doesn't reject the drop due to an active foreign key.
+-- Drop views, tables, and triggers
+
+DROP VIEW IF EXISTS PerformanceCheapestPrice;
+DROP VIEW IF EXISTS SectionAvailability;
+DROP VIEW IF EXISTS AvailableSeatsByPerformance;
+DROP VIEW IF EXISTS EventPerformanceLocations;
 
 DROP TABLE IF EXISTS Comments;
 DROP TABLE IF EXISTS ResaleListings;
@@ -23,6 +27,6 @@ DROP TABLE IF EXISTS Customers;
 DROP TABLE IF EXISTS Users;
 DROP TABLE IF EXISTS Taxonomy;
 
-DROP TRIGGER trg_section_venue_match
-DROP TRIGGER trg_resale_price_cap
-DROP TRIGGER trg_ticket_seat_consistency
+DROP TRIGGER IF EXISTS trg_section_venue_match;
+DROP TRIGGER IF EXISTS trg_resale_price_cap;
+DROP TRIGGER IF EXISTS trg_ticket_seat_consistency;

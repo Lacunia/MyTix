@@ -1,6 +1,11 @@
 -- ============================================================================
--- DROP TRIGGERS & TABLES
+-- DROP VIEWS, TRIGGERS & TABLES
 -- ============================================================================
+
+DROP VIEW IF EXISTS PerformanceCheapestPrice;
+DROP VIEW IF EXISTS SectionAvailability;
+DROP VIEW IF EXISTS AvailableSeatsByPerformance;
+DROP VIEW IF EXISTS EventPerformanceLocations;
 
 DROP TABLE IF EXISTS Comments;
 DROP TABLE IF EXISTS ResaleListings;
@@ -24,9 +29,9 @@ DROP TABLE IF EXISTS Customers;
 DROP TABLE IF EXISTS Users;
 DROP TABLE IF EXISTS Taxonomy;
 
-DROP TRIGGER trg_section_venue_match
-DROP TRIGGER trg_resale_price_cap
-DROP TRIGGER trg_ticket_seat_consistency
+DROP TRIGGER IF EXISTS trg_section_venue_match;
+DROP TRIGGER IF EXISTS trg_resale_price_cap;
+DROP TRIGGER IF EXISTS trg_ticket_seat_consistency;
 
 -- ============================================================================
 -- USERS & ACCOUNT SUBCLASSES
@@ -166,11 +171,17 @@ CREATE TABLE Performances (
     performanceId INT AUTO_INCREMENT PRIMARY KEY,
     eventId INT NOT NULL,
     venueId INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
     dateTime DATETIME NOT NULL,
     status ENUM('Scheduled', 'Cancelled') NOT NULL DEFAULT 'Scheduled',
+    cancelledAt DATETIME,
 
     CONSTRAINT fk_performances_event FOREIGN KEY (eventId) REFERENCES Events(eventId) ON DELETE RESTRICT,
-    CONSTRAINT fk_performances_venue FOREIGN KEY (venueId) REFERENCES Venues(venueId) ON DELETE RESTRICT
+    CONSTRAINT fk_performances_venue FOREIGN KEY (venueId) REFERENCES Venues(venueId) ON DELETE RESTRICT,
+    CONSTRAINT chk_performances_cancelled_at CHECK (
+        (status = 'Scheduled' AND cancelledAt IS NULL) OR
+        (status = 'Cancelled' AND cancelledAt IS NOT NULL)
+    )
 );
 
 CREATE TABLE PriceTiers (
@@ -232,6 +243,7 @@ CREATE TABLE Tickets (
     price DECIMAL(10,2) NOT NULL,
     currentOwnerId INT NOT NULL,
     status ENUM('Active', 'Cancelled by customer', 'Cancelled by organizer') NOT NULL DEFAULT 'Active',
+    cancelledAt DATETIME,
 
     CONSTRAINT fk_tickets_order FOREIGN KEY (orderId) REFERENCES Orders(orderId),
     CONSTRAINT fk_tickets_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId),
@@ -240,7 +252,11 @@ CREATE TABLE Tickets (
     CONSTRAINT fk_tickets_owner FOREIGN KEY (currentOwnerId) REFERENCES Customers(customerId),
     -- A given seat can be sold at most once per performance
     CONSTRAINT unique_seat_per_performance UNIQUE (performanceId, seatId),
-    CONSTRAINT chk_ticket_price_non_neg CHECK (price >= 0)
+    CONSTRAINT chk_ticket_price_non_neg CHECK (price >= 0),
+    CONSTRAINT chk_tickets_cancelled_at CHECK (
+        (status = 'Active' AND cancelledAt IS NULL) OR
+        (status != 'Active' AND cancelledAt IS NOT NULL)
+    )
 );
 
 CREATE TABLE TicketOwnershipHistory (
@@ -364,3 +380,104 @@ BEGIN
         SET MESSAGE_TEXT = 'A general-admission ticket must not specify a seat';
     END IF;
 END$$
+
+-- ============================================================================
+-- VIEWS (used in queries and reports)
+-- ============================================================================
+
+-- Q1
+-- 1. Finding the seat availability for each sections for each performances
+-- - Reserved seating: total seats in the section - seats blocked - seats sold
+-- - General admission: standing capacity - tickets sold
+CREATE VIEW SectionAvailability AS
+SELECT
+    psa.performanceId,
+    psa.sectionId,
+    pt.price,
+    -- calculate seat availability (as a single value)
+    CASE
+        WHEN s.isReservedSeating THEN
+            (SELECT COUNT(*) 
+             FROM Seats st JOIN SectionRows r ON r.rowId = st.rowId
+             WHERE r.sectionId = s.sectionId)
+            -- Get blocked seats only in this specific section for this performance
+            - (SELECT COUNT(*) 
+               FROM BlockedSeats bs
+               JOIN Seats st ON st.seatId = bs.seatId
+               JOIN SectionRows r ON r.rowId = st.rowId
+               WHERE r.sectionId = s.sectionId
+                 AND bs.performanceId = psa.performanceId)
+            - (SELECT COUNT(*)
+               FROM Tickets t
+               WHERE t.performanceId = psa.performanceId
+                 AND t.sectionId = s.sectionId
+                 AND t.status = 'Active')
+        ELSE
+            s.standingCapacity
+            - (SELECT COUNT(*)
+               FROM Tickets t
+               WHERE t.performanceId = psa.performanceId
+                 AND t.sectionId = s.sectionId
+                 AND t.status = 'Active')
+    END AS availableSeatCount
+FROM PerformanceSectionAssignments psa
+JOIN Sections s ON s.sectionId = psa.sectionId
+JOIN PriceTiers pt ON pt.tierId = psa.tierId;
+
+-- 2. Finding cheapest available ticket price per performance
+-- (only counting sections/price-tiers that still have at least one seat/slot available)
+CREATE VIEW PerformanceCheapestPrice AS
+SELECT performanceId, MIN(price) AS cheapestPrice
+FROM SectionAvailability
+WHERE availableSeatCount > 0
+GROUP BY performanceId;
+
+-- Q7:
+-- 1. Finding every seat that is available (not sold, not blocked) for a given
+-- performance, with its row/section/price. 
+-- Unlike SectionAvailability (which only counts seats), this exposes individual 
+-- seat rows so Q7 can find consecutive seat numbers.
+CREATE VIEW AvailableSeatsByPerformance AS
+SELECT
+    st.seatId,
+    st.seatNumber,
+    r.rowId,
+    r.rowName,
+    s.sectionId,
+    s.sectionName,
+    psa.performanceId,
+    pt.price
+FROM Seats st
+JOIN SectionRows r ON r.rowId = st.rowId
+JOIN Sections s ON s.sectionId = r.sectionId
+JOIN PerformanceSectionAssignments psa ON psa.sectionId = s.sectionId
+JOIN PriceTiers pt ON pt.tierId = psa.tierId
+WHERE st.seatId NOT IN (
+    SELECT bs.seatId 
+    FROM BlockedSeats bs 
+    WHERE bs.performanceId = psa.performanceId
+)
+AND st.seatId NOT IN (
+    SELECT t.seatId 
+    FROM Tickets t
+    WHERE t.performanceId = psa.performanceId AND t.status = 'Active' AND t.seatId IS NOT NULL
+);
+
+
+-- R2:
+-- 1. one row per (event, performance, its taxonomy, its venue's location).
+-- So, a touring event, with multiple venues, produces multiple rows here.
+CREATE VIEW EventPerformanceLocations AS
+SELECT
+    e.eventId,
+    p.performanceId,
+    t.segment,
+    t.genre,
+    v.country,
+    v.city,
+    v.venueId,
+    v.name AS venueName
+FROM Events e
+JOIN Performance p ON p.eventId = e.eventId
+JOIN Taxonomy t ON t.taxonomyId = e.taxonomyId
+JOIN Venues v ON v.venueId = p.venueId;
