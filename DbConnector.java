@@ -118,8 +118,17 @@ public class DbConnector {
             //   Reports            -> R1-R9 (revenue, counts, rankings, etc.)
             //   OrganizerToolkit   -> suggested tier structure/pricing for a
             //                         new performance (+ extra-credit revenue estimate)
-            //
-            // e.g.: new UserOperations(conn).createUser(...);
+
+            // Replace 1 with an organizerId that already exists in Organizers.
+            int organizerId = 1;
+            EventOperations eventOps = new EventOperations(conn);
+            int taxonomyId = eventOps.createTaxonomy("Music", "Concert");
+
+            String title = "Sample Event";
+            String description = "This is a sample event.";
+            double resalePriceCap = 1.20;
+            int eventId = eventOps.createEvent(organizerId, taxonomyId, title, description, resalePriceCap);
+            System.out.println("Created event with ID: " + eventId);
         }
     }
 }
