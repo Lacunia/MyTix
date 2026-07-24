@@ -1,5 +1,6 @@
 import java.sql.*;
 import java.util.Scanner;
+import java.time.LocalDate;
 
 /**
  * Compile:  javac -cp mysql-connector-java-8.0.29.jar demo.java
@@ -8,9 +9,10 @@ import java.util.Scanner;
  */
 public class DbConnector {
 
-    static final String URL  = "jdbc:mysql://localhost:3306/mydb";
-    static final String USER = "root";
-    static final String PASS = "";
+    static final EnvConfig config = new EnvConfig();
+    static final String URL  = config.get("DB_URL");
+    static final String USER = config.get("DB_USER");
+    static final String PASS = config.get("DB_PASSWORD");
 
     public static void main(String[] args) throws SQLException {
 
@@ -120,6 +122,108 @@ public class DbConnector {
             //                         new performance (+ extra-credit revenue estimate)
             //
             // e.g.: new UserOperations(conn).createUser(...);
+
+            Scanner scanner = new Scanner(System.in);
+            SearchQueries search = new SearchQueries(conn);
+            Reports reports = new Reports(conn);
+
+            boolean running = true;
+            while (running) {
+                System.out.println("\n=== MyTix Action Menu ===");
+                System.out.println("1) Q1  - Search performances by location");
+                System.out.println("2) Q6  - Seat map summary for a performance");
+                System.out.println("3) Q7  - Best available seats");
+                System.out.println("4) R1  - Tickets & revenue by city");
+                System.out.println("5) R1b - Tickets & revenue by venue in a city");
+                System.out.println("6) R2  - Event/performance counts by taxonomy & location");
+                System.out.println("7) R3  - Rank organizers by revenue (overall)");
+                System.out.println("8) R3b - Rank organizers by revenue per country");
+                System.out.println("9) R3c - Rank organizers by revenue in a city");
+                System.out.println("10) R6 - Most cancellations in a year");
+                System.out.println("0) Exit");
+                System.out.print("Choice (e.g. for option 1, enter 1): ");
+                String choice = scanner.nextLine().trim();
+
+                switch (choice) {
+                    case "1" -> {
+                        System.out.print("Enter a latitude: ");
+                        double lat = Double.parseDouble(scanner.nextLine());
+
+                        System.out.print("Enter a longitude: ");
+                        double lon = Double.parseDouble(scanner.nextLine());
+
+                        System.out.print("Search radius in km (press Enter for default - "
+                            + SearchQueries.getDefaultRadiusKm() + " km): ");
+                        String radiusInput = scanner.nextLine().trim();
+                        double radiusKm = radiusInput.isEmpty()
+                            ? SearchQueries.getDefaultRadiusKm()
+                            : Double.parseDouble(radiusInput);
+
+                        System.out.print("Rank by 'distance' or 'price' (press Enter for 'distance'): ");
+                        String rankByInput = scanner.nextLine().trim();
+                        String rankBy = rankByInput.isEmpty() ? "distance" : rankByInput;
+
+                        System.out.print("Direction 'asc' or 'desc' (press Enter for 'asc'): ");
+                        String directionInput = scanner.nextLine().trim();
+                        String direction = directionInput.isEmpty() ? "asc" : directionInput;
+
+                        search.searchByLocation(lat, lon, radiusKm, rankBy, direction);
+                    }
+                    case "2" -> {
+                        System.out.print("Enter the performance ID: ");
+                        int perfId = Integer.parseInt(scanner.nextLine());
+
+                        search.seatMapSummary(perfId);
+                    }
+                    case "3" -> {
+                        System.out.print("Enter the performance ID: ");
+                        int perfId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the quantity of tickets: ");
+                        int qty = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the budget (press Enter for none): ");
+                        String budgetInput = scanner.nextLine().trim();
+                        Double budget = budgetInput.isEmpty() ? null : Double.parseDouble(budgetInput);
+
+                        search.bestAvailable(perfId, qty, budget);
+                    }
+                    case "4" -> {
+                        System.out.print("Enter the report start date (YYYY-MM-DD): ");
+                        LocalDate start = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the report end date (YYYY-MM-DD): ");
+                        LocalDate end = LocalDate.parse(scanner.nextLine());
+
+                        reports.ticketsAndRevenueByCity(start, end);
+                    }
+                    case "5" -> {
+                        System.out.print("Enter the report start date (YYYY-MM-DD): ");
+                        LocalDate start = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the report end date (YYYY-MM-DD): ");
+                        LocalDate end = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the city: ");
+                        String city = scanner.nextLine();
+
+                        reports.ticketsAndRevenueByVenue(start, end, city);
+                    }
+                    case "6" -> reports.eventCountsByTaxonomyAndLocation();
+                    case "7" -> reports.rankOrganizersByRevenueOverall();
+                    case "8" -> reports.rankOrganizersByRevenuePerCountry();
+                    case "9" -> {
+                        System.out.print("Enter the city: ");
+                        reports.rankOrganizersByRevenueByCity(scanner.nextLine());
+                    }
+                    case "10" -> {
+                        System.out.print("Enter the report year: ");
+                        reports.mostCancellations(Integer.parseInt(scanner.nextLine()));
+                    }
+                    case "0" -> running = false;
+                    default -> System.out.println("Invalid choice.");
+                }
+            }
         }
     }
 }
