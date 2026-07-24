@@ -27,6 +27,8 @@ DROP TABLE IF EXISTS Customers;
 DROP TABLE IF EXISTS Users;
 DROP TABLE IF EXISTS Taxonomy;
 
+DROP TRIGGER IF EXISTS trg_users_minimum_age_insert;
+DROP TRIGGER IF EXISTS trg_users_minimum_age_update;
 DROP TRIGGER IF EXISTS trg_section_venue_match;
 DROP TRIGGER IF EXISTS trg_resale_price_cap;
 DROP TRIGGER IF EXISTS trg_ticket_seat_consistency;
