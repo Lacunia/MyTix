@@ -478,6 +478,6 @@ SELECT
     v.venueId,
     v.name AS venueName
 FROM Events e
-JOIN Performance p ON p.eventId = e.eventId
+JOIN Performances p ON p.eventId = e.eventId
 JOIN Taxonomy t ON t.taxonomyId = e.taxonomyId
 JOIN Venues v ON v.venueId = p.venueId;
