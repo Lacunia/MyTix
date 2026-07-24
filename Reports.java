@@ -1,4 +1,10 @@
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.LocalDate;
 
 /**
  * R1-R9 analytics reports. All must be implemented in SQL and invoked from
@@ -14,20 +20,274 @@ public class Reports {
         this.conn = conn;
     }
 
-    // R1: tickets sold + gross revenue in a date range, by city, and by venue within a city.
-    public void ticketsAndRevenueByCity(/* startDate, endDate, city (optional) */) {
-        // TODO
+    /**
+     * R1 - report by city
+     * startDate - start of the date range
+     * endDate - end of the date range
+     */
+    public void ticketsAndRevenueByCity(LocalDate startDate, LocalDate endDate) {
+        String query =
+            "SELECT v.city, COUNT(t.ticketId) AS ticketsSold, COALESCE(SUM(t.price), 0) AS grossRevenue " +
+            "FROM Venues v " +
+            "LEFT JOIN Performances p ON p.venueId = v.venueId AND p.dateTime BETWEEN ? AND ? " +
+            "LEFT JOIN Tickets t ON t.performanceId = p.performanceId AND t.status = 'Active' " +
+            "GROUP BY v.city " +
+            "ORDER BY grossRevenue DESC";
+        
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setTimestamp(1, Timestamp.valueOf(startDate.atStartOfDay()));
+            ps.setTimestamp(2, Timestamp.valueOf(endDate.atTime(23, 59, 59)));
+
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.printf("%-25s %12s %15s%n", "City", "Tickets Sold", "Gross Revenue");
+                System.out.println("-".repeat(55));
+
+                while (rs.next()) {
+                    System.out.printf("%-25s %12d %15.2f%n",
+                        rs.getString("city"),
+                        rs.getInt("ticketsSold"),
+                        rs.getDouble("grossRevenue"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    // R2: count of events/performances per segment+genre, per country,
-    // per country+city, per country+city+venue.
+    /**
+     * R1 - report by venue in a city
+     * startDate - start of the date range
+     * endDate - end of the date range
+     * city - for reporting by venue in a city
+     */
+    public void ticketsAndRevenueByVenue(LocalDate startDate, LocalDate endDate, String city) {
+        String query =
+            "SELECT v.venueId, v.name AS venueName, COUNT(t.ticketId) AS ticketsSold, COALESCE(SUM(t.price), 0) AS grossRevenue " +
+            "FROM Venues v " +
+            "LEFT JOIN Performances p ON p.venueId = v.venueId AND p.dateTime BETWEEN ? AND ? " +
+            "LEFT JOIN Tickets t ON t.performanceId = p.performanceId AND t.status = 'Active' " +
+            "WHERE v.city = ? " +
+            "GROUP BY v.venueId, v.name " +
+            "ORDER BY grossRevenue DESC";
+        
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setTimestamp(1, Timestamp.valueOf(startDate.atStartOfDay()));
+            ps.setTimestamp(2, Timestamp.valueOf(endDate.atTime(23, 59, 59)));
+            ps.setString(3, city);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.printf("%-10s %-25s %12s %15s%n", "Venue Id", "Venue", "Tickets Sold", "Gross Revenue");
+                System.out.println("-".repeat(67));
+
+                while (rs.next()) {
+                    System.out.printf("%-10d %-25s %12d %15.2f%n",
+                        rs.getInt("venueId"),
+                        rs.getString("venueName"),
+                        rs.getInt("ticketsSold"),
+                        rs.getDouble("grossRevenue"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    // R2:
     public void eventCountsByTaxonomyAndLocation() {
-        // TODO
+        // Report per segment + genre
+        String bySegmentGenre = 
+            "SELECT segment, genre, " +
+            "       COUNT(DISTINCT eventId) AS eventCount, " +
+            "       COUNT(DISTINCT performanceId) AS performanceCount " +
+            "FROM EventPerformanceLocations " +
+            "GROUP BY segment, genre " +
+            "ORDER BY segment, genre";
+
+        // Report per country
+        String byCountry =
+            "SELECT country, " +
+            "       COUNT(DISTINCT eventId) AS eventCount, " +
+            "       COUNT(DISTINCT performanceId) AS performanceCount " +
+            "FROM EventPerformanceLocations " +
+            "GROUP BY country " +
+            "ORDER BY country";
+
+        // Report per country + city
+        String byCountryCity =
+            "SELECT country, city, " +
+            "       COUNT(DISTINCT eventId) AS eventCount, " +
+            "       COUNT(DISTINCT performanceId) AS performanceCount " +
+            "FROM EventPerformanceLocations " +
+            "GROUP BY country, city " +
+            "ORDER BY country, city";
+
+        // Report per country + city + venue
+        String byCountryCityVenue =
+            "SELECT country, city, venueId, venueName, " +
+            "       COUNT(DISTINCT eventId) AS eventCount, " +
+            "       COUNT(DISTINCT performanceId) AS performanceCount " +
+            "FROM EventPerformanceLocations " +
+            "GROUP BY country, city, venueId, venueName " +
+            "ORDER BY country, city, venueName";
+        
+        // Using Statement instead of PreparedStatement b/c there is no runtime variable here
+        try (Statement stmt = conn.createStatement()) {
+            System.out.println("=== Event & Performance Count per Segment/Genre ===");
+            System.out.printf("%-20s %-20s %10s %15s%n", "Segment", "Genre", "Events", "Performances");
+            System.out.println("-".repeat(65));
+            try (ResultSet rs = stmt.executeQuery(bySegmentGenre)) {
+                while (rs.next()) {
+                    System.out.printf("%-20s %-20s %10d %15d%n",
+                        rs.getString("segment"),
+                        rs.getString("genre"),
+                        rs.getInt("eventCount"),
+                        rs.getInt("performanceCount"));
+                }
+            }
+
+            System.out.println("\n=== Event & Performance Count per Country ===");
+            System.out.printf("%-20s %10s %15s%n", "Country", "Events", "Performances");
+            System.out.println("-".repeat(45));
+            try (ResultSet rs = stmt.executeQuery(byCountry)) {
+                while (rs.next()) {
+                    System.out.printf("%-20s %10d %15d%n",
+                        rs.getString("country"),
+                        rs.getInt("eventCount"),
+                        rs.getInt("performanceCount"));
+                }
+            }
+
+            System.out.println("\n=== Event & Performance Count per Country + City ===");
+            System.out.printf("%-20s %-20s %10s %15s%n", "Country", "City", "Events", "Performances");
+            System.out.println("-".repeat(65));
+            try (ResultSet rs = stmt.executeQuery(byCountryCity)) {
+                while (rs.next()) {
+                    System.out.printf("%-20s %-20s %10d %15d%n",
+                        rs.getString("country"),
+                        rs.getString("city"),
+                        rs.getInt("eventCount"),
+                        rs.getInt("performanceCount"));
+                }
+            }
+
+            System.out.println("\n=== Event & Performance Count per Country + City + Venue ===");
+            System.out.printf("%-20s %-20s %-25s %10s %15s%n", "Country", "City", "VenueName", "Events", "Performances");
+            System.out.println("-".repeat(90));
+            try (ResultSet rs = stmt.executeQuery(byCountryCityVenue)) {
+                while (rs.next()) {
+                    System.out.printf("%-20s %-20s %-25s %10d %15d%n",
+                        rs.getString("country"),
+                        rs.getString("city"),
+                        rs.getString("venueName"),
+                        rs.getInt("eventCount"),
+                        rs.getInt("performanceCount"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    // R3: rank organizers by gross revenue overall, per country, per country+city.
-    public void rankOrganizersByRevenue(/* country (optional), city (optional) */) {
-        // TODO
+    /**
+     * R3 - rank by organizer gross revenue
+     */
+    public void rankOrganizersByRevenueOverall() {
+        String query =
+            "SELECT o.organizerId, u.name AS organizerName, COALESCE(SUM(t.price), 0) AS grossRevenue " +
+            "FROM Organizers o " +
+            "JOIN Users u ON u.userId = o.organizerId " +
+            "LEFT JOIN Events e ON e.organizerId = o.organizerId " +
+            "LEFT JOIN Performances p ON p.eventId = e.eventId " +
+            "LEFT JOIN Tickets t ON t.performanceId = p.performanceId AND t.status = 'Active' " +
+            "GROUP BY o.organizerId, u.name " +
+            "ORDER BY grossRevenue DESC";
+        
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            
+            System.out.printf("%-10s %-25s %15s%n", "OrgID", "Organizer", "Gross Revenue");
+            System.out.println("-".repeat(55));
+
+            while (rs.next()) {
+                System.out.printf("%-10d %-25s %15.2f%n",
+                    rs.getInt("organizerId"),
+                    rs.getString("organizerName"),
+                    rs.getDouble("grossRevenue"));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * R3 - rank organizers by gross revenue within each country
+     *      So, will report organizer ranking within each country.
+     */
+    public void rankOrganizersByRevenuePerCountry() {
+        String query =
+            "SELECT v.country, o.organizerId, u.name AS organizerName, SUM(t.price) AS grossRevenue " +
+            "FROM Tickets t " +
+            "JOIN Performances p ON p.performanceId = t.performanceId " +
+            "JOIN Venues v ON v.venueId = p.venueId " +
+            "JOIN Events e ON e.eventId = p.eventId " +
+            "JOIN Organizers o ON o.organizerId = e.organizerId " +
+            "JOIN Users u ON u.userId = o.organizerId " +
+            "WHERE t.status = 'Active' " +
+            "GROUP BY v.country, o.organizerId, u.name " +
+            "ORDER BY v.country, grossRevenue DESC";
+        
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+
+            System.out.printf("%-20s %-10s %-25s %15s%n", "Country", "OrgID", "Organizer", "Gross Revenue");
+            System.out.println("-".repeat(75));
+
+            while (rs.next()) {
+                System.out.printf("%-20s %-10d %-25s %15.2f%n",
+                    rs.getString("country"),
+                    rs.getInt("organizerId"),
+                    rs.getString("organizerName"),
+                    rs.getDouble("grossRevenue"));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * R3 - Refine the ranking down to organizers active in one specific city
+     * city - the city to rank organizers in
+     */
+    public void rankOrganizersByRevenueByCity(String city) {
+        String query = 
+            "SELECT o.organizerId, u.name AS organizerName, SUM(t.price) AS grossRevenue " +
+            "FROM Tickets t " +
+            "JOIN Performances p ON p.performanceId = t.performanceId " +
+            "JOIN Venues v ON v.venueId = p.venueId " +
+            "JOIN Events e ON e.eventId = p.eventId " +
+            "JOIN Organizers o ON o.organizerId = e.organizerId " +
+            "JOIN Users u ON u.userId = o.organizerId " +
+            "WHERE t.status = 'Active' AND v.city = ? " +
+            "GROUP BY o.organizerId, u.name " +
+            "ORDER BY grossRevenue DESC";
+
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setString(1, city);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.printf("%-10s %-25s %15s%n", "OrgID", "Organizer", "Gross Revenue");
+                System.out.println("-".repeat(55));
+
+                while (rs.next()) {
+                    System.out.printf("%-10d %-25s %15.2f%n",
+                        rs.getInt("organizerId"),
+                        rs.getString("organizerName"),
+                        rs.getDouble("grossRevenue"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // R4: per city, customers who — in the past year — listed for resale more
@@ -42,10 +302,98 @@ public class Reports {
         // TODO
     }
 
+    // R6: We also wish to report the customers with the largest number of cancelled tickets and the
+    // organizers with the largest number of cancelled performances within a year
+
     // R6: customers with the most cancelled tickets, organizers with the most
     // cancelled performances, within a year.
-    public void mostCancellations(/* year */) {
-        // TODO
+
+    /**
+     * R6:
+     * year - the year to report in
+     */
+    public void mostCancellations(int year) {
+        String topCancellingCustomers =
+            "SELECT c.customerId, u.name AS customerName, COUNT(*) AS cancelledTicketCount " +
+            "FROM Tickets t " +
+            "JOIN Customers c ON c.customerId = t.currentOwnerId " +
+            "JOIN Users u ON u.userId = c.customerId " +
+            "WHERE t.status = 'Cancelled by customer' " +
+            "  AND YEAR(t.cancelledAt) = ? " +
+            "GROUP BY c.customerId, u.name " +
+            "HAVING COUNT(*) = ( " +
+            "    SELECT MAX(count) " +
+            "    FROM ( " +
+            "        SELECT COUNT(*) AS count " +
+            "        FROM Tickets t2 " +
+            "        WHERE t2.status = 'Cancelled by customer' " +
+            "          AND YEAR(t2.cancelledAt) = ? " +
+            "        GROUP BY t2.currentOwnerId " +
+            "    ) cancelCounts " +
+            ")";
+
+        String topCancellingOrganizers =
+            "SELECT o.organizerId, u.name AS organizerName, COUNT(*) AS cancelledPerformanceCount " +
+            "FROM Performances p " +
+            "JOIN Events e ON e.eventId = p.eventId " +
+            "JOIN Organizers o ON o.organizerId = e.organizerId " +
+            "JOIN Users u ON u.userId = o.organizerId " +
+            "WHERE p.status = 'Cancelled' " +
+            "  AND YEAR(p.cancelledAt) = ? " +
+            "GROUP BY o.organizerId, u.name " +
+            "HAVING COUNT(*) = ( " +
+            "    SELECT MAX(count) " +
+            "    FROM ( " +
+            "        SELECT COUNT(*) AS count " +
+            "        FROM Performances p2 " +
+            "        JOIN Events e2 ON e2.eventId = p2.eventId " +
+            "        WHERE p2.status = 'Cancelled' " +
+            "          AND YEAR(p2.cancelledAt) = ? " +
+            "        GROUP BY e2.organizerId " +
+            "    ) cancelCounts " +
+            ")";
+
+        // Execute and output most cancelling customers
+        try (PreparedStatement customersPs = conn.prepareStatement(topCancellingCustomers)) {
+            customersPs.setInt(1, year);
+            customersPs.setInt(2, year);
+
+            try (ResultSet rs = customersPs.executeQuery()) {
+                System.out.println("=== Customers with the Most Cancelled Tickets (" + year + ") ===");
+                System.out.printf("%-10s %-25s %20s%n", "CustID", "Customer", "Cancelled Tickets");
+                System.out.println("-".repeat(60));
+
+                while (rs.next()) {
+                    System.out.printf("%-10d %-25s %20d%n",
+                        rs.getInt("customerId"),
+                        rs.getString("customerName"),
+                        rs.getInt("cancelledTicketCount"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        // Execute and output most cancelling organizers
+        try (PreparedStatement organizersPs = conn.prepareStatement(topCancellingOrganizers)) {
+            organizersPs.setInt(1, year);
+            organizersPs.setInt(2, year);
+
+            try (ResultSet rs = organizersPs.executeQuery()) {
+                System.out.println("\n=== Organizers with the Most Cancelled Performances (" + year + ") ===");
+                System.out.printf("%-10s %-25s %25s%n", "OrgID", "Organizer", "Cancelled Performances");
+                System.out.println("-".repeat(65));
+
+                while (rs.next()) {
+                    System.out.printf("%-10d %-25s %25d%n",
+                        rs.getInt("organizerId"),
+                        rs.getString("organizerName"),
+                        rs.getInt("cancelledPerformanceCount"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // R7: sell-through rate per performance and per price tier (blocked seats
