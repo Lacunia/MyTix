@@ -8,9 +8,11 @@ import java.util.Scanner;
  */
 public class DbConnector {
 
-    static final String URL  = "jdbc:mysql://localhost:3306/mydb";
-    static final String USER = "root";
-    static final String PASS = "";
+    private static final EnvConfig ENV = new EnvConfig();
+
+    static final String URL  = ENV.get("DB_URL");
+    static final String USER = ENV.get("DB_USER");
+    static final String PASS = ENV.get("DB_PASSWORD");
 
     public static void main(String[] args) throws SQLException {
 
@@ -119,13 +121,13 @@ public class DbConnector {
             //   OrganizerToolkit   -> suggested tier structure/pricing for a
             //                         new performance (+ extra-credit revenue estimate)
 
-            // Replace 1 with an organizerId that already exists in Organizers.
-            int organizerId = 1;
+            // an organizerId that already exists in Organizers.
+            int organizerId = 4;
             EventOperations eventOps = new EventOperations(conn);
             int taxonomyId = eventOps.createTaxonomy("Music", "Concert");
 
             String title = "Sample Event";
-            String description = "This is a sample event.";
+            String description = "This is a sample event again.";
             double resalePriceCap = 1.20;
             int eventId = eventOps.createEvent(organizerId, taxonomyId, title, description, resalePriceCap);
             System.out.println("Created event with ID: " + eventId);

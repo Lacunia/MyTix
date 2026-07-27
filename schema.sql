@@ -24,9 +24,11 @@ DROP TABLE IF EXISTS Customers;
 DROP TABLE IF EXISTS Users;
 DROP TABLE IF EXISTS Taxonomy;
 
-DROP TRIGGER trg_section_venue_match
-DROP TRIGGER trg_resale_price_cap
-DROP TRIGGER trg_ticket_seat_consistency
+DROP TRIGGER IF EXISTS trg_section_venue_match;
+DROP TRIGGER IF EXISTS trg_resale_price_cap;
+DROP TRIGGER IF EXISTS trg_ticket_seat_consistency;
+DROP TRIGGER IF EXISTS trg_users_minimum_age_insert;
+DROP TRIGGER IF EXISTS trg_users_minimum_age_update;
 
 -- ============================================================================
 -- USERS & ACCOUNT SUBCLASSES
@@ -38,10 +40,7 @@ CREATE TABLE Users (
     email VARCHAR(255) NOT NULL UNIQUE,
     address VARCHAR(255) NOT NULL,
     dateOfBirth DATE NOT NULL,
-    accountType ENUM('Customer', 'Organizer') NOT NULL DEFAULT 'Customer',
-
-    -- Ensures users are at least 18 years old to open an account
-    CONSTRAINT chk_minimum_age CHECK (dateOfBirth <= CURDATE() - INTERVAL 18 YEAR)
+    accountType ENUM('Customer', 'Organizer') NOT NULL DEFAULT 'Customer'
 );
 
 CREATE TABLE Customers (
@@ -299,6 +298,8 @@ CREATE TABLE Comments (
 -- TRIGGERS
 -- ============================================================================
 
+DELIMITER $$
+
 -- A section can only be assigned a price tier for a performance that is actually
 -- held at the section's own venue.
 -- - Below, for PerformanceSectionAssignments, we check that the section's venueId
@@ -364,3 +365,26 @@ BEGIN
         SET MESSAGE_TEXT = 'A general-admission ticket must not specify a seat';
     END IF;
 END$$
+
+-- Check if all users are >= 18 years old
+CREATE TRIGGER trg_users_minimum_age_insert
+BEFORE INSERT ON Users
+FOR EACH ROW
+BEGIN
+    IF DATE_ADD(NEW.dateOfBirth, INTERVAL 18 YEAR) > CURDATE() THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Users must be at least 18 years old.';
+    END IF;
+END$$
+
+CREATE TRIGGER trg_users_minimum_age_update
+BEFORE UPDATE ON Users
+FOR EACH ROW
+BEGIN
+    IF DATE_ADD(NEW.dateOfBirth, INTERVAL 18 YEAR) > CURDATE() THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Users must be at least 18 years old.';
+    END IF;
+END$$
+
+DELIMITER ;
