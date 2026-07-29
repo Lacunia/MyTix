@@ -5,6 +5,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 /**
  * R1-R9 analytics reports. All must be implemented in SQL and invoked from
@@ -15,6 +23,22 @@ import java.time.LocalDate;
 public class Reports {
 
     private final Connection conn;
+
+    // Fields for R9
+    private static final int TOP_PHRASE_COUNT = 10;
+    // Common English function words to strip out before extracting phrase
+    // candidates.
+    private static final Set<String> STOPWORDS = new java.util.HashSet<>(Arrays.asList(
+        "a", "an", "the", "and", "or", "but", "so", "if", "of", "in", "on", "at",
+        "to", "for", "with", "from", "by", "as", "about", "into", "over", "after",
+        "before", "between", "through", "during", "this", "that", "these", "those",
+        "it", "its", "it's", "i", "we", "you", "he", "she", "they", "them", "his",
+        "her", "their", "our", "your", "my", "me", "us", "is", "was", "were", "are",
+        "be", "been", "being", "am", "will", "would", "could", "should", "can",
+        "do", "does", "did", "have", "has", "had", "not", "no", "very", "really",
+        "just", "there", "here", "up", "down", "out", "all", "some", "one", "also",
+        "too", "then", "than", "what", "who", "which", "when", "where", "how"
+    ));
 
     public Reports(Connection conn) {
         this.conn = conn;
@@ -412,7 +436,126 @@ public class Reports {
 
     // R9: most popular noun phrases per event, derived from Comments.content
     // (SQL pulls the raw text; a Java NLP library does the phrase extraction).
+
+    /**
+     * R9
+     */
     public void topNounPhrasesByEvent() {
-        // TODO
+        String query = 
+            "SELECT e.eventId, e.title, c.content " +
+            "FROM Comments c " +
+            "JOIN Performances p ON p.performanceId = c.performanceId " +
+            "JOIN Events e ON e.eventId = p.eventId " +
+            "ORDER BY e.eventId";
+
+        Map<Integer, String> eventTitles = new LinkedHashMap<>();
+        Map<Integer, StringBuilder> eventComments = new HashMap<>();
+
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+            while (rs.next()) {
+                int eventId = rs.getInt("eventId");
+                eventTitles.putIfAbsent(eventId, rs.getString("title"));
+                // Append this comment to the string builder for this event
+                // so that all comments for this event goes into this string builder
+                eventComments.computeIfAbsent(eventId, k -> new StringBuilder())
+                    .append(rs.getString("content")).append(" ");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        // For each event
+        for (Map.Entry<Integer, String> entry : eventTitles.entrySet()) {
+            int eventId = entry.getKey();
+            String title = entry.getValue();
+            String allComments = eventComments.get(eventId).toString();
+
+            // Count frequencies for each candidate phrases
+            Map<String, Integer> frequencies = new HashMap<>();
+            for (String phrase : extractPhraseCandidates(allComments)) {
+                // First time seeing the phrase --> inserts { "some phrase" : 1 }
+                // Phrase exist in map --> look up current count, adds 1 to it, and
+                //                         update map to { "some phrase" : <new count> }
+                frequencies.merge(phrase, 1, Integer::sum);
+            }
+
+            // Sort by highest frequency, breaking ties alphabetically so the
+            // top-N cutoff is deterministic across runs, then limit to 10
+            List<Map.Entry<String, Integer>> topPhrases = frequencies.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()
+                    .thenComparing(Map.Entry.comparingByKey()))
+                .limit(TOP_PHRASE_COUNT)
+                .collect(Collectors.toList());
+
+            // Display top phrases for this event
+            System.out.println("\n=== Event #" + eventId + " - " + title + " ===");
+            System.out.printf("%-30s %10s%n", "Phrase", "Count");
+            System.out.println("-".repeat(42));
+            for (Map.Entry<String, Integer> phraseEntry : topPhrases) {
+                System.out.printf("%-30s %10d%n", phraseEntry.getKey(), phraseEntry.getValue());
+            }
+        }
+    }
+
+    /**
+     * Extracts noun-phrase candidates from a block of comment text: splits on
+     * sentence punctuation first (so phrases never span two sentences), then
+     * within each sentence, groups consecutive non-stopword words together and
+     * treats each such run as possible phrase material.
+     */
+    private static List<String> extractPhraseCandidates(String text) {
+        List<String> candidates = new ArrayList<>();
+
+        // Split on common sentence punctuations
+        String[] sentences = text.toLowerCase().split("[.,!?;:]+");
+
+        for (String sentence : sentences) {
+            // Strip remaining punctuation and split into individual words
+            String[] tokens = sentence.split("[^a-zA-Z']+");
+            List<String> run = new ArrayList<>();
+
+            for (String token : tokens) {
+                if (token.isEmpty()) continue;
+
+                if (STOPWORDS.contains(token)) {
+                    // When hitting a stopword, we end the current run of content
+                    // words and flush (add) what we've accumulated so far as candidates
+                    flushRun(run, candidates);
+                    run.clear();
+                } else {
+                    // If not a stopword - keep accumulating into current run
+                    run.add(token);
+                }
+            }
+
+            // Sentence ended - flush 
+            flushRun(run, candidates);
+        }
+        return candidates;
+    }
+
+    /**
+     * Turns one run of consecutive non-stopword words into phrase candidates:
+     * the run itself (capped at 4 words), every 2-word sub-phrase within it,
+     * and each individual word -- so both short common phrases and single
+     * frequent nouns can appear in frequent count.
+     */
+    private static void flushRun(List<String> run, List<String> candidates) {
+        if (run.isEmpty()) return;
+
+        // Add the whole run as one phrase, capped at 4 words to avoid long/unhelpful phrases
+        if (run.size() > 2) {
+            int len = Math.min(run.size(), 4);
+            candidates.add(String.join(" ", run.subList(0, len)));
+        }
+
+        // Add every adjacent pair within the run (e.g. "sound quality")
+        for (int i = 0; i + 1 < run.size(); i++) {
+            candidates.add(run.get(i) + " " + run.get(i + 1));
+        }
+
+        // Add every individual words
+        candidates.addAll(run);
     }
 }

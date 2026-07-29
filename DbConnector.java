@@ -140,6 +140,7 @@ public class DbConnector {
                 System.out.println("8) R3b - Rank organizers by revenue per country");
                 System.out.println("9) R3c - Rank organizers by revenue in a city");
                 System.out.println("10) R6 - Most cancellations in a year");
+                System.out.println("11) R9 - Top noun phrases in comments per event");
                 System.out.println("0) Exit");
                 System.out.print("Choice (e.g. for option 1, enter 1): ");
                 String choice = scanner.nextLine().trim();
@@ -220,6 +221,7 @@ public class DbConnector {
                         System.out.print("Enter the report year: ");
                         reports.mostCancellations(Integer.parseInt(scanner.nextLine()));
                     }
+                    case "11" -> reports.topNounPhrasesByEvent();
                     case "0" -> running = false;
                     default -> System.out.println("Invalid choice.");
                 }

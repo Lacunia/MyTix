@@ -59,10 +59,14 @@ INSERT INTO SectionRows (rowId, sectionId, rowName) VALUES
 (4, 4, 'A');
 
 -- Row A (Floor, venue 1): seats 1-5 -- used for Q7's consecutive-seat search
+-- Seat 15 (rowId 3, Orchestra) added below so a second customer can
+-- genuinely hold a ticket to performance 3 -- backs the R9 comments seeded
+-- further down with real attendance instead of just inserting reviews
+-- with no matching ticket.
 INSERT INTO Seats (seatId, rowId, seatNumber) VALUES
 (1, 1, 1), (2, 1, 2), (3, 1, 3), (4, 1, 4), (5, 1, 5),
 (6, 2, 1), (7, 2, 2), (8, 2, 3),
-(9, 3, 1), (10, 3, 2), (11, 3, 3),
+(9, 3, 1), (10, 3, 2), (11, 3, 3), (15, 3, 4),
 (12, 4, 1), (13, 4, 2), (14, 4, 3);
 
 -- ============================================================================
@@ -108,7 +112,8 @@ INSERT INTO PerformanceSectionAssignments (sectionId, performanceId, tierId) VAL
 
 INSERT INTO Orders (orderId, customerId, performanceId, paymentId, purchaseTime, totalPaid) VALUES
 (1, 3, 1, 1, DATE_SUB(NOW(), INTERVAL 5 DAY), 540.00),
-(2, 4, 3, 2, DATE_SUB(NOW(), INTERVAL 61 DAY), 225.00);
+(2, 4, 3, 2, DATE_SUB(NOW(), INTERVAL 61 DAY), 225.00),
+(3, 5, 3, 3, DATE_SUB(NOW(), INTERVAL 61 DAY), 75.00);
 
 INSERT INTO Tickets (ticketId, orderId, performanceId, sectionId, seatId, price, currentOwnerId, status) VALUES
 (1, 1, 1, 1, 1, 180.00, 3, 'Active'),
@@ -116,7 +121,8 @@ INSERT INTO Tickets (ticketId, orderId, performanceId, sectionId, seatId, price,
 (3, 1, 1, 1, 3, 180.00, 3, 'Active'),
 (4, 2, 3, 3, 9, 75.00, 4, 'Active'),
 (5, 2, 3, 3, 10, 75.00, 4, 'Active'),
-(6, 2, 3, 3, 11, 75.00, 4, 'Active');
+(6, 2, 3, 3, 11, 75.00, 4, 'Active'),
+(8, 3, 3, 3, 15, 75.00, 5, 'Active');
 
 -- A cancelled ticket, to exercise R6 (customer cancellation ranking).
 -- Seat 6 is Row B / Floor (section 1, reserved seating), so a seatId is required.
@@ -130,3 +136,15 @@ INSERT INTO BlockedSeats (performanceId, seatId, reason) VALUES
 -- A cancelled performance, to exercise R6 (organizer cancellation ranking)
 INSERT INTO Performances (performanceId, eventId, venueId, name, dateTime, status, cancelledAt) VALUES
 (4, 2, 2, 'City Hoops - Cancelled Game', DATE_SUB(NOW(), INTERVAL 10 DAY), 'Cancelled', NOW());
+
+-- ============================================================================
+-- COMMENTS (exercises R9's noun-phrase report)
+-- Only performance 3 is genuinely in the past with real ticket holders in
+-- this smoke-test data (customers 4 and 5), so this is the only event with
+-- reviews here. The full submission dataset needs many more past
+-- performances/reviews across >= 10 events per the assignment spec.
+-- ============================================================================
+
+INSERT INTO Comments (commentId, customerId, performanceId, content, eventRating, venueRating) VALUES
+(1, 4, 3, 'The game was amazing and the atmosphere was incredible. The sound quality was great from our seats near the court.', 5, 4),
+(2, 5, 3, 'What an atmosphere! The sound quality could have been a bit better but overall the game was great and exciting.', 4, 3);
