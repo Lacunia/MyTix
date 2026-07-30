@@ -1,4 +1,9 @@
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+import utils.ValidationUtils;
 
 /**
  * Organizer-side event/performance/pricing management.
@@ -7,6 +12,8 @@ import java.sql.Connection;
  * cancel a performance.
  */
 public class EventOperations {
+
+    private static final int MYSQL_DUPLICATE_ENTRY = 1062;
 
     private final Connection conn;
 
@@ -48,21 +55,163 @@ public class EventOperations {
         return false;
     }
 
-    // Insert into BlockedSeats. Must first confirm the seat isn't already sold
-    // for this performance (organizer cannot block a sold seat).
-    public boolean blockSeat(/* performanceId, seatId, reason */) {
-        // TODO
-        return false;
+    /**
+     * Blocks an available seat for a performance (obstructed view, production
+     * equipment, etc.), making it unsellable.
+     *
+     * organizerId - the organizer attempting the block (must own this event)
+     * performanceId, seatId - the seat to block
+     * reason - free-text reason (e.g. "Obstructed view")
+     */
+    public boolean blockSeat(int organizerId, int performanceId, int seatId, String reason) {
+        try {
+            conn.setAutoCommit(false);
+
+            if (!isOrganizerOfPerformance(organizerId, performanceId)) {
+                rollbackQuietly();
+                return false;
+            }
+
+            // Confirm the seat is actually part of this performance's venue.
+            String seatCheckSql =
+                "SELECT sec.sectionId " +
+                "FROM Seats st " +
+                "JOIN SectionRows r ON r.rowId = st.rowId " +
+                "JOIN Sections sec ON sec.sectionId = r.sectionId " +
+                "JOIN PerformanceSectionAssignments psa " +
+                "    ON psa.sectionId = sec.sectionId AND psa.performanceId = ? " +
+                "WHERE st.seatId = ?";
+
+            try (PreparedStatement ps = conn.prepareStatement(seatCheckSql)) {
+                ps.setInt(1, performanceId);
+                ps.setInt(2, seatId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        System.out.println("Seat " + seatId + " is not part of this performance's venue.");
+                        rollbackQuietly();
+                        return false;
+                    }
+                }
+            }
+
+            // An organizer cannot block a seat that is already sold.
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT 1 FROM Tickets WHERE performanceId = ? AND seatId = ? AND status = 'Active'")) {
+                ps.setInt(1, performanceId);
+                ps.setInt(2, seatId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        System.out.println("Seat " + seatId + " is already sold for this performance and cannot be blocked.");
+                        rollbackQuietly();
+                        return false;
+                    }
+                }
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO BlockedSeats (performanceId, seatId, reason) VALUES (?, ?, ?)")) {
+                ps.setInt(1, performanceId);
+                ps.setInt(2, seatId);
+                ps.setString(3, reason);
+                ps.executeUpdate();
+            }
+
+            conn.commit();
+            System.out.println("Seat " + seatId + " blocked for performance " + performanceId + ".");
+            return true;
+
+        } catch (SQLException e) {
+            rollbackQuietly();
+            if (e.getErrorCode() == MYSQL_DUPLICATE_ENTRY) {
+                System.out.println("Seat " + seatId + " is already blocked for this performance.");
+                return false;
+            }
+            throw new RuntimeException(e);
+        } finally {
+            restoreAutoCommit();
+        }
     }
 
-    // Delete the row from BlockedSeats for (performanceId, seatId).
-    public void unblockSeat(/* performanceId, seatId */) {
-        // TODO
+    /**
+     * Unblocks a previously blocked seat, making it sellable again.
+     *
+     * organizerId - the organizer attempting the unblock (must own this event)
+     * performanceId, seatId - the seat to unblock
+     */
+    public boolean unblockSeat(int organizerId, int performanceId, int seatId) {
+        try {
+            conn.setAutoCommit(false);
+
+            if (!isOrganizerOfPerformance(organizerId, performanceId)) {
+                rollbackQuietly();
+                return false;
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "DELETE FROM BlockedSeats WHERE performanceId = ? AND seatId = ?")) {
+                ps.setInt(1, performanceId);
+                ps.setInt(2, seatId);
+                int rows = ps.executeUpdate();
+                conn.commit();
+
+                if (rows == 0) {
+                    System.out.println("Seat " + seatId + " was not blocked for this performance.");
+                    return false;
+                }
+                System.out.println("Seat " + seatId + " unblocked for performance " + performanceId + ".");
+                return true;
+            }
+
+        } catch (SQLException e) {
+            rollbackQuietly();
+            throw new RuntimeException(e);
+        } finally {
+            restoreAutoCommit();
+        }
     }
 
     // Set Performances.status = 'Cancelled', refund every sold ticket for it,
     // and record the cancellation (Tickets.status = 'Cancelled by organizer').
     public void cancelPerformance(/* performanceId */) {
         // TODO
+    }
+
+    // Confirms the given organizer owns the event this performance belongs to.
+    private boolean isOrganizerOfPerformance(int organizerId, int performanceId) throws SQLException {
+        String sql =
+            "SELECT e.organizerId " +
+            "FROM Performances p " +
+            "JOIN Events e ON e.eventId = p.eventId " +
+            "WHERE p.performanceId = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, performanceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    System.out.println("Performance " + performanceId + " does not exist.");
+                    return false;
+                }
+                boolean owns = rs.getInt("organizerId") == organizerId;
+                if (!owns) {
+                    System.out.println("Organizer " + organizerId + " does not manage this performance's event.");
+                }
+                return owns;
+            }
+        }
+    }
+
+    private void rollbackQuietly() {
+        try {
+            conn.rollback();
+        } catch (SQLException ignored) {
+            // Best-effort rollback -- nothing further to do if this itself fails.
+        }
+    }
+
+    private void restoreAutoCommit() {
+        try {
+            conn.setAutoCommit(true);
+        } catch (SQLException ignored) {
+            // Best-effort restore.
+        }
     }
 }

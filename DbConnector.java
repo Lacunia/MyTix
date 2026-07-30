@@ -131,6 +131,7 @@ public class DbConnector {
             Reports reports = new Reports(conn);
             UserOperations userOps = new UserOperations(conn);
             BookingOperations bookingOps = new BookingOperations(conn);
+            EventOperations eventOps = new EventOperations(conn);
 
             boolean running = true;
             while (running) {
@@ -143,6 +144,10 @@ public class DbConnector {
                 System.out.println("--- Ticket Booking Operations ---");
                 System.out.println("b1a) Book reserved seating tickets");
                 System.out.println("b1b) Book general admission tickets");
+
+                System.out.println("--- Organizer Operations ---");
+                System.out.println("o7) Block a seat");
+                System.out.println("o8) Unblock a seat");
 
                 System.out.println("--- Queries ---");
                 System.out.println("q1) Q1  - Search performances by location");
@@ -247,6 +252,35 @@ public class DbConnector {
                         int quantity = Integer.parseInt(scanner.nextLine());
 
                         bookingOps.bookGeneralAdmission(customerId, performanceId, paymentId, sectionId, quantity);
+                    }
+
+                    // ---------- Organizer Operations ---------- 
+                    case "o7" -> {
+                        System.out.print("Enter the Organizer ID: ");
+                        int organizerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Performance ID: ");
+                        int performanceId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Seat ID to block: ");
+                        int seatId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Reason for blocking: ");
+                        String reason = scanner.nextLine();
+
+                        eventOps.blockSeat(organizerId, performanceId, seatId, reason);
+                    }
+                    case "o8" -> {
+                        System.out.print("Enter the Organizer ID: ");
+                        int organizerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Performance ID: ");
+                        int performanceId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Seat ID to unblock: ");
+                        int seatId = Integer.parseInt(scanner.nextLine());
+
+                        eventOps.unblockSeat(organizerId, performanceId, seatId);
                     }
 
                     // ---------- Queries ----------
