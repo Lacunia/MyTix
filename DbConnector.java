@@ -1,6 +1,9 @@
 import java.sql.*;
 import java.util.Scanner;
 import java.time.LocalDate;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Compile:  javac -cp mysql-connector-java-8.0.29.jar demo.java
@@ -127,6 +130,7 @@ public class DbConnector {
             SearchQueries search = new SearchQueries(conn);
             Reports reports = new Reports(conn);
             UserOperations userOps = new UserOperations(conn);
+            BookingOperations bookingOps = new BookingOperations(conn);
 
             boolean running = true;
             while (running) {
@@ -135,6 +139,10 @@ public class DbConnector {
                 System.out.println("u1) Create customer profile");
                 System.out.println("u2) Create organizer profile");
                 System.out.println("u3) Delete user");
+
+                System.out.println("--- Ticket Booking Operations ---");
+                System.out.println("b1a) Book reserved seating tickets");
+                System.out.println("b1b) Book general admission tickets");
 
                 System.out.println("--- Queries ---");
                 System.out.println("q1) Q1  - Search performances by location");
@@ -201,6 +209,44 @@ public class DbConnector {
                     case "u3" -> {
                         System.out.print("User ID to delete: ");
                         userOps.deleteUser(Integer.parseInt(scanner.nextLine()));
+                    }
+
+                    // ---------- Ticket Booking Operations ----------
+                    case "b1a" -> {
+                        System.out.print("Enter the Customer ID: ");
+                        int customerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Performance ID: ");
+                        int performanceId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Payment ID: ");
+                        int paymentId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Seat IDs (comma-separated): ");
+                        List<Integer> seatIds = Arrays.stream(scanner.nextLine().split(","))
+                            .map(String::trim)
+                            .map(Integer::parseInt)
+                            .collect(Collectors.toList());
+
+                        bookingOps.bookReservedSeats(customerId, performanceId, paymentId, seatIds);
+                    }
+                    case "b1b" -> {
+                        System.out.print("Enter the Customer ID: ");
+                        int customerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Performance ID: ");
+                        int performanceId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Section ID: ");
+                        int sectionId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Payment ID: ");
+                        int paymentId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Quantity: ");
+                        int quantity = Integer.parseInt(scanner.nextLine());
+
+                        bookingOps.bookGeneralAdmission(customerId, performanceId, paymentId, sectionId, quantity);
                     }
 
                     // ---------- Queries ----------
