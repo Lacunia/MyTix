@@ -1,5 +1,6 @@
 import java.sql.*;
 import java.util.Scanner;
+import java.time.LocalDate;
 
 /**
  * Compile:  javac -cp mysql-connector-java-8.0.29.jar demo.java
@@ -120,17 +121,173 @@ public class DbConnector {
             //   Reports            -> R1-R9 (revenue, counts, rankings, etc.)
             //   OrganizerToolkit   -> suggested tier structure/pricing for a
             //                         new performance (+ extra-credit revenue estimate)
+            //
+            // e.g.: new UserOperations(conn).createUser(...);
 
-            // an organizerId that already exists in Organizers.
-            int organizerId = 4;
-            EventOperations eventOps = new EventOperations(conn);
-            int taxonomyId = eventOps.createTaxonomy("Music", "Concert");
+            Scanner scanner = new Scanner(System.in);
+            SearchQueries search = new SearchQueries(conn);
+            Reports reports = new Reports(conn);
+            UserOperations userOps = new UserOperations(conn);
 
-            String title = "Sample Event";
-            String description = "This is a sample event again.";
-            double resalePriceCap = 1.20;
-            int eventId = eventOps.createEvent(organizerId, taxonomyId, title, description, resalePriceCap);
-            System.out.println("Created event with ID: " + eventId);
+            boolean running = true;
+            while (running) {
+                System.out.println("\n=== MyTix ===");
+                System.out.println("--- User Management Operations ---");
+                System.out.println("u1) Create customer profile");
+                System.out.println("u2) Create organizer profile");
+                System.out.println("u3) Delete user");
+
+                System.out.println("--- Queries ---");
+                System.out.println("q1) Q1  - Search performances by location");
+                System.out.println("q6) Q6  - Seat map summary for a performance");
+                System.out.println("q7) Q7  - Best available seats");
+
+                System.out.println("--- Reports ---");
+                System.out.println("r1) R1  - Tickets & revenue by city");
+                System.out.println("r1b) R1b - Tickets & revenue by venue in a city");
+                System.out.println("r2) R2  - Event/performance counts by taxonomy & location");
+                System.out.println("r3) R3  - Rank organizers by revenue (overall)");
+                System.out.println("r3b) R3b - Rank organizers by revenue per country");
+                System.out.println("r3c) R3c - Rank organizers by revenue in a city");
+                System.out.println("r6) R6 - Most cancellations in a year");
+                System.out.println("r9) R9 - Top noun phrases in comments per event");
+
+                System.out.println("0) Exit");
+                System.out.print("Choice (e.g. for option u1, enter u1): ");
+                String choice = scanner.nextLine().trim();
+
+                switch (choice) {
+                    // ---------------- User Management Operations ----------------
+                    case "u1" -> {
+                        System.out.print("Enter the Name: ");
+                        String name = scanner.nextLine();
+
+                        System.out.print("Enter the Email: ");
+                        String email = scanner.nextLine();
+
+                        System.out.print("Enter the Address: ");
+                        String address = scanner.nextLine();
+
+                        System.out.print("Enter the Date of birth (YYYY-MM-DD): ");
+                        LocalDate dob = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the Cardholder name: ");
+                        String cardholderName = scanner.nextLine();
+
+                        System.out.print("Enter the Card number: ");
+                        String cardNumber = scanner.nextLine();
+
+                        System.out.print("Enter the Expiry (MM/YY): ");
+                        String expiry = scanner.nextLine();
+
+                        int id = userOps.createCustomer(name, email, address, dob, cardholderName, cardNumber, expiry);
+                        System.out.println("Created customer with ID " + id);
+                    }
+                    case "u2" -> {
+                        System.out.print("Enter the Name: ");
+                        String name = scanner.nextLine();
+
+                        System.out.print("Enter the Email: ");
+                        String email = scanner.nextLine();
+
+                        System.out.print("Enter the Address: ");
+                        String address = scanner.nextLine();
+
+                        System.out.print("Enter the Date of birth (YYYY-MM-DD): ");
+                        LocalDate dob = LocalDate.parse(scanner.nextLine());
+
+                        int id = userOps.createOrganizer(name, email, address, dob);
+                        System.out.println("Created organizer with ID " + id);
+                    }
+                    case "u3" -> {
+                        System.out.print("User ID to delete: ");
+                        userOps.deleteUser(Integer.parseInt(scanner.nextLine()));
+                    }
+
+                    // ---------- Queries ----------
+                    case "q1" -> {
+                        System.out.print("Enter a latitude: ");
+                        double lat = Double.parseDouble(scanner.nextLine());
+
+                        System.out.print("Enter a longitude: ");
+                        double lon = Double.parseDouble(scanner.nextLine());
+
+                        System.out.print("Search radius in km (press Enter for default - "
+                            + SearchQueries.getDefaultRadiusKm() + " km): ");
+                        String radiusInput = scanner.nextLine().trim();
+                        double radiusKm = radiusInput.isEmpty()
+                            ? SearchQueries.getDefaultRadiusKm()
+                            : Double.parseDouble(radiusInput);
+
+                        System.out.print("Rank by 'distance' or 'price' (press Enter for 'distance'): ");
+                        String rankByInput = scanner.nextLine().trim();
+                        String rankBy = rankByInput.isEmpty() ? "distance" : rankByInput;
+
+                        System.out.print("Direction 'asc' or 'desc' (press Enter for 'asc'): ");
+                        String directionInput = scanner.nextLine().trim();
+                        String direction = directionInput.isEmpty() ? "asc" : directionInput;
+
+                        search.searchByLocation(lat, lon, radiusKm, rankBy, direction);
+                    }
+                    case "q6" -> {
+                        System.out.print("Enter the performance ID: ");
+                        int perfId = Integer.parseInt(scanner.nextLine());
+
+                        search.seatMapSummary(perfId);
+                    }
+                    case "q7" -> {
+                        System.out.print("Enter the performance ID: ");
+                        int perfId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the quantity of tickets: ");
+                        int qty = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the budget (press Enter for none): ");
+                        String budgetInput = scanner.nextLine().trim();
+                        Double budget = budgetInput.isEmpty() ? null : Double.parseDouble(budgetInput);
+
+                        search.bestAvailable(perfId, qty, budget);
+                    }
+
+                    // ---------- Reports ----------
+                    case "r1" -> {
+                        System.out.print("Enter the report start date (YYYY-MM-DD): ");
+                        LocalDate start = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the report end date (YYYY-MM-DD): ");
+                        LocalDate end = LocalDate.parse(scanner.nextLine());
+
+                        reports.ticketsAndRevenueByCity(start, end);
+                    }
+                    case "r1b" -> {
+                        System.out.print("Enter the report start date (YYYY-MM-DD): ");
+                        LocalDate start = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the report end date (YYYY-MM-DD): ");
+                        LocalDate end = LocalDate.parse(scanner.nextLine());
+
+                        System.out.print("Enter the city: ");
+                        String city = scanner.nextLine();
+
+                        reports.ticketsAndRevenueByVenue(start, end, city);
+                    }
+                    case "r2" -> reports.eventCountsByTaxonomyAndLocation();
+                    case "r3" -> reports.rankOrganizersByRevenueOverall();
+                    case "r3b" -> reports.rankOrganizersByRevenuePerCountry();
+                    case "r3c" -> {
+                        System.out.print("Enter the city: ");
+                        reports.rankOrganizersByRevenueByCity(scanner.nextLine());
+                    }
+                    case "r6" -> {
+                        System.out.print("Enter the report year: ");
+                        reports.mostCancellations(Integer.parseInt(scanner.nextLine()));
+                    }
+                    case "r9" -> reports.topNounPhrasesByEvent();
+
+                    case "0" -> running = false;
+                    default -> System.out.println("Invalid choice.");
+                }
+            }
         }
     }
 }
