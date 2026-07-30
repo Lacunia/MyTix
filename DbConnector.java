@@ -132,6 +132,7 @@ public class DbConnector {
             UserOperations userOps = new UserOperations(conn);
             BookingOperations bookingOps = new BookingOperations(conn);
             EventOperations eventOps = new EventOperations(conn);
+            ResaleOperations resaleOps = new ResaleOperations(conn);
 
             boolean running = true;
             while (running) {
@@ -144,10 +145,13 @@ public class DbConnector {
                 System.out.println("--- Ticket Booking Operations ---");
                 System.out.println("b1a) Book reserved seating tickets");
                 System.out.println("b1b) Book general admission tickets");
+                System.out.println("b3) List ticket for resale");
+                System.out.println("b4) Withdraw resale listing");
+                System.out.println("b5) Purchase resale listing");
 
                 System.out.println("--- Organizer Operations ---");
-                System.out.println("o7) Block a seat");
-                System.out.println("o8) Unblock a seat");
+                System.out.println("o7) Block a seat for a performance");
+                System.out.println("o8) Unblock a seat for a performance");
 
                 System.out.println("--- Queries ---");
                 System.out.println("q1) Q1  - Search performances by location");
@@ -252,6 +256,39 @@ public class DbConnector {
                         int quantity = Integer.parseInt(scanner.nextLine());
 
                         bookingOps.bookGeneralAdmission(customerId, performanceId, paymentId, sectionId, quantity);
+                    }
+                    case "b3" -> {
+                        System.out.print("Enter the Ticket ID: ");
+                        int ticketId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Seller (customer) ID: ");
+                        int sellerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Asking price: ");
+                        double askingPrice = Double.parseDouble(scanner.nextLine());
+
+                        resaleOps.listTicketForResale(ticketId, sellerId, askingPrice);
+                    }
+                    case "b4" -> {
+                        System.out.print("Enter the Listing ID: ");
+                        int listingId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Seller (customer) ID: ");
+                        int sellerId = Integer.parseInt(scanner.nextLine());
+
+                        resaleOps.withdrawListing(listingId, sellerId);
+                    }
+                    case "b5" -> {
+                        System.out.print("Enter the Listing ID: ");
+                        int listingId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Buyer (customer) ID: ");
+                        int buyerId = Integer.parseInt(scanner.nextLine());
+
+                        System.out.print("Enter the Payment ID: ");
+                        int paymentId = Integer.parseInt(scanner.nextLine());
+
+                        resaleOps.purchaseListing(listingId, buyerId, paymentId);
                     }
 
                     // ---------- Organizer Operations ---------- 

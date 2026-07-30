@@ -20,7 +20,9 @@ INSERT INTO Customers (customerId) VALUES (3), (4), (5);
 INSERT INTO PaymentMethods (paymentId, customerId, cardholderName, cardNumber, expiryDate) VALUES
 (1, 3, 'Carol Customer', '4111111111111111', '12/28'),
 (2, 4, 'Dave Customer',  '4111111111112222', '11/27'),
-(3, 5, 'Eve Customer',   '4111111111113333', '09/29');
+(3, 5, 'Eve Customer',   '4111111111113333', '09/29'),
+(4, 3, 'Carol Customer (2nd card)', '5111111111114444', '03/28'),
+(5, 4, 'Dave Customer (2nd card)',  '5111111111115555', '05/27');
 
 -- ============================================================================
 -- TAXONOMY

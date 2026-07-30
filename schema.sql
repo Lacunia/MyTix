@@ -263,12 +263,17 @@ CREATE TABLE TicketOwnershipHistory (
     ticketId INT NOT NULL,
     sellerId INT NOT NULL,
     buyerId INT NOT NULL,
+    paymentId INT NOT NULL,
     transactionPrice DECIMAL(10,2) NOT NULL,
     transactionDate DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT fk_toh_ticket FOREIGN KEY (ticketId) REFERENCES Tickets(ticketId) ON DELETE CASCADE,
     CONSTRAINT fk_toh_seller FOREIGN KEY (sellerId) REFERENCES Customers(customerId),
     CONSTRAINT fk_toh_buyer FOREIGN KEY (buyerId) REFERENCES Customers(customerId),
+    -- No ON DELETE CASCADE: a payment method used in a completed resale
+    -- transaction must remain traceable in history even if the buyer later
+    -- removes that card from their account.
+    CONSTRAINT fk_toh_payment FOREIGN KEY (paymentId) REFERENCES PaymentMethods(paymentId),
     CONSTRAINT chk_trxn_price_non_neg CHECK (transactionPrice >= 0)
 );
 
