@@ -1,3 +1,5 @@
 #!/bin/bash
-javac -cp "mysql-connector-java-8.0.29.jar" DbConnector.java SearchQueries.java Reports.java EnvConfig.java UserOperations.java EventOperations.java BookingOperations.java ResaleOperations.java ReviewOperations.java OrganizerToolkit.java && \
+
+# Later change to where the java files actually are
+javac -cp "mysql-connector-java-8.0.29.jar" *.java utils/*.java && \
 java -cp ".:mysql-connector-java-8.0.29.jar" DbConnector
