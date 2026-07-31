@@ -3,6 +3,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import utils.ValidationUtils;
@@ -307,9 +309,74 @@ public class BookingOperations {
     // Only the customer who placed the order may cancel; only allowed up to
     // seven days before the performance. Full refund, Tickets.status =
     // 'Cancelled by customer', seat becomes available again.
-    public boolean cancelTickets(/* customerId, ticketIds */) {
-        // TODO
-        return false;
+    public boolean cancelTickets(int customerId, List<Integer> ticketIds) {
+        if (ticketIds == null || ticketIds.isEmpty()) {
+            return false;
+        }
+        if (ticketIds.stream().distinct().count() != ticketIds.size()) {
+            throw new IllegalArgumentException("A ticket may only be cancelled once per request.");
+        }
+
+        try {
+            conn.setAutoCommit(false);
+            List<CancelledTicket> cancellable = new ArrayList<>();
+            String lookup =
+                "SELECT t.ticketId, t.price, o.paymentId, p.dateTime " +
+                "FROM Tickets t JOIN Orders o ON o.orderId = t.orderId " +
+                "JOIN Performances p ON p.performanceId = t.performanceId " +
+                "WHERE t.ticketId = ? AND o.customerId = ? AND t.status = 'Active' FOR UPDATE";
+            try (PreparedStatement ps = conn.prepareStatement(lookup)) {
+                for (int ticketId : ticketIds) {
+                    ps.setInt(1, ticketId);
+                    ps.setInt(2, customerId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next() || rs.getTimestamp("dateTime").toLocalDateTime()
+                                .isBefore(LocalDateTime.now().plusDays(7))) {
+                            rollbackQuietly();
+                            return false;
+                        }
+                        cancellable.add(new CancelledTicket(ticketId, rs.getInt("paymentId"), rs.getDouble("price")));
+                    }
+                }
+            }
+
+            try (PreparedStatement cancel = conn.prepareStatement(
+                     "UPDATE Tickets SET status = 'Cancelled by customer', cancelledAt = NOW() " +
+                     "WHERE ticketId = ? AND status = 'Active'");
+                 PreparedStatement withdraw = conn.prepareStatement(
+                     "UPDATE ResaleListings SET status = 'Withdrawn' WHERE ticketId = ? AND status = 'Active'");
+                 PreparedStatement refund = conn.prepareStatement(
+                     "INSERT INTO Refunds (ticketId, paymentId, amount, reason) VALUES (?, ?, ?, 'Customer cancellation')")) {
+                for (CancelledTicket ticket : cancellable) {
+                    cancel.setInt(1, ticket.ticketId);
+                    if (cancel.executeUpdate() != 1) throw new SQLException("Ticket cancellation race detected.");
+                    withdraw.setInt(1, ticket.ticketId);
+                    withdraw.executeUpdate();
+                    refund.setInt(1, ticket.ticketId);
+                    refund.setInt(2, ticket.paymentId);
+                    refund.setDouble(3, ticket.amount);
+                    refund.executeUpdate();
+                }
+            }
+            conn.commit();
+            return true;
+        } catch (SQLException e) {
+            rollbackQuietly();
+            throw new RuntimeException("Unable to cancel tickets.", e);
+        } finally {
+            restoreAutoCommit();
+        }
+    }
+
+    private static final class CancelledTicket {
+        final int ticketId;
+        final int paymentId;
+        final double amount;
+        CancelledTicket(int ticketId, int paymentId, double amount) {
+            this.ticketId = ticketId;
+            this.paymentId = paymentId;
+            this.amount = amount;
+        }
     }
 
     private void rollbackQuietly() {

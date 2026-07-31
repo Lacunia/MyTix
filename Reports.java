@@ -2,6 +2,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -317,13 +318,26 @@ public class Reports {
     // R4: per city, customers who — in the past year — listed for resale more
     // than half of the tickets they purchased, having purchased >= 10 (scalper flag).
     public void possibleScalpersByCity() {
-        // TODO
+        String sql = "SELECT v.city, c.customerId, u.name, COUNT(DISTINCT t.ticketId) purchased, " +
+            "COUNT(DISTINCT h.ticketId) resold, COUNT(DISTINCT h.ticketId)/COUNT(DISTINCT t.ticketId)*100 resalePct " +
+            "FROM Orders o JOIN Tickets t ON t.orderId=o.orderId JOIN Customers c ON c.customerId=o.customerId " +
+            "JOIN Users u ON u.userId=c.customerId JOIN Performances p ON p.performanceId=o.performanceId JOIN Venues v ON v.venueId=p.venueId " +
+            "LEFT JOIN TicketOwnershipHistory h ON h.ticketId=t.ticketId AND h.sellerId=c.customerId AND h.transactionDate >= DATE_SUB(NOW(), INTERVAL 1 YEAR) " +
+            "WHERE o.purchaseTime >= DATE_SUB(NOW(), INTERVAL 1 YEAR) GROUP BY v.city,c.customerId,u.name " +
+            "HAVING COUNT(DISTINCT t.ticketId)>=10 AND COUNT(DISTINCT h.ticketId)>COUNT(DISTINCT t.ticketId)/2 ORDER BY v.city,resalePct DESC";
+        printQuery(sql);
     }
 
     // R5: rank customers by number of orders in a time period, and (separately)
     // by number of orders per city — only customers with >= 2 orders that year for the latter.
-    public void rankCustomersByOrders(/* startDate, endDate */) {
-        // TODO
+    public void rankCustomersByOrders(LocalDate startDate, LocalDate endDate) {
+        String global = "SELECT u.name, COUNT(*) orders, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) ranking " +
+            "FROM Orders o JOIN Users u ON u.userId=o.customerId WHERE o.purchaseTime >= ? AND o.purchaseTime < ? GROUP BY o.customerId,u.name ORDER BY ranking,u.name";
+        String city = "SELECT v.city,u.name,COUNT(*) orders,DENSE_RANK() OVER(PARTITION BY v.city ORDER BY COUNT(*) DESC) ranking " +
+            "FROM Orders o JOIN Users u ON u.userId=o.customerId JOIN Performances p ON p.performanceId=o.performanceId JOIN Venues v ON v.venueId=p.venueId " +
+            "WHERE o.purchaseTime >= ? AND o.purchaseTime < ? GROUP BY v.city,o.customerId,u.name HAVING COUNT(*)>=2 ORDER BY v.city,ranking,u.name";
+        printQuery(global, startDate, endDate.plusDays(1));
+        printQuery(city, startDate, endDate.plusDays(1));
     }
 
     // R6: We also wish to report the customers with the largest number of cancelled tickets and the
@@ -423,15 +437,41 @@ public class Reports {
     // R7: sell-through rate per performance and per price tier (blocked seats
     // excluded from sellable capacity, GA capacity counts). Also: for a given
     // month, by city, performances that sold out vs sold < 25%.
-    public void sellThroughReport(/* month, city (optional) */) {
-        // TODO
+    public void sellThroughReport(LocalDate month, String city) {
+        String sql = "SELECT p.performanceId,p.name,v.city,pt.tierName, " +
+            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable,COALESCE(SUM(sold.soldCount),0) sold, " +
+            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+            "JOIN PriceTiers pt ON pt.tierId=psa.tierId JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
+            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+            "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
+            "GROUP BY p.performanceId,p.name,v.city,pt.tierName ORDER BY p.performanceId,pt.tierName";
+        if (city == null) printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        else printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
     }
 
     // R8: per event — completed resales count, avg markup over face value,
     // fraction of listings priced exactly at cap; top 10 events by resale
     // volume in a period.
-    public void resaleReport(/* startDate, endDate */) {
-        // TODO
+    public void resaleReport(LocalDate startDate, LocalDate endDate) {
+        String sql = "SELECT e.eventId,e.title,COUNT(DISTINCT h.historyId) completedResales,AVG(h.transactionPrice-t.price) avgMarkup, " +
+            "100*SUM(CASE WHEN ABS(rl.resalePrice-(t.price*e.resalePriceCap))<0.005 THEN 1 ELSE 0 END)/NULLIF(COUNT(rl.listingId),0) exactCapPct " +
+            "FROM Events e JOIN Performances p ON p.eventId=e.eventId JOIN Tickets t ON t.performanceId=p.performanceId " +
+            "LEFT JOIN TicketOwnershipHistory h ON h.ticketId=t.ticketId AND h.transactionDate>=? AND h.transactionDate<? " +
+            "LEFT JOIN ResaleListings rl ON rl.ticketId=t.ticketId AND rl.postedDate>=? AND rl.postedDate<? " +
+            "GROUP BY e.eventId,e.title ORDER BY completedResales DESC LIMIT 10";
+        printQuery(sql, startDate, endDate.plusDays(1), startDate, endDate.plusDays(1));
+    }
+
+    private void printQuery(String sql, Object... params) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i=0;i<params.length;i++) ps.setObject(i+1, params[i]);
+            try (ResultSet rs=ps.executeQuery()) {
+                ResultSetMetaData meta=rs.getMetaData();
+                for(int i=1;i<=meta.getColumnCount();i++) System.out.print(meta.getColumnLabel(i)+(i==meta.getColumnCount()?"\n":" | "));
+                while(rs.next()) { for(int i=1;i<=meta.getColumnCount();i++) System.out.print(rs.getObject(i)+(i==meta.getColumnCount()?"\n":" | ")); }
+            }
+        } catch(SQLException e) { throw new RuntimeException("Report failed.",e); }
     }
 
     // R9: most popular noun phrases per event, derived from Comments.content

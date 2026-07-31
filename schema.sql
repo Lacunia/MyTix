@@ -7,6 +7,8 @@ DROP VIEW IF EXISTS SectionAvailability;
 DROP VIEW IF EXISTS AvailableSeatsByPerformance;
 DROP VIEW IF EXISTS EventPerformanceLocations;
 
+DROP TABLE IF EXISTS Refunds;
+DROP TABLE IF EXISTS PostalCodeAdjacency;
 DROP TABLE IF EXISTS Comments;
 DROP TABLE IF EXISTS ResaleListings;
 DROP TABLE IF EXISTS TicketOwnershipHistory;
@@ -125,6 +127,15 @@ CREATE TABLE Venues (
     postalCode VARCHAR(20) NOT NULL,
     city VARCHAR(100) NOT NULL,
     country VARCHAR(100) NOT NULL
+);
+
+-- Canadian/US postal prefixes are not numerically adjacent.  This small
+-- lookup keeps the proximity rule explicit and works for any postal format.
+CREATE TABLE PostalCodeAdjacency (
+    postalPrefix VARCHAR(10) NOT NULL,
+    adjacentPrefix VARCHAR(10) NOT NULL,
+    PRIMARY KEY (postalPrefix, adjacentPrefix),
+    CONSTRAINT chk_postal_adjacency_not_self CHECK (postalPrefix <> adjacentPrefix)
 );
 
 CREATE TABLE Sections (
@@ -258,6 +269,20 @@ CREATE TABLE Tickets (
     )
 );
 
+-- One refund is created for each cancelled ticket.  Keeping it separate from
+-- payment capture allows partial-order refunds to be audited accurately.
+CREATE TABLE Refunds (
+    refundId INT AUTO_INCREMENT PRIMARY KEY,
+    ticketId INT NOT NULL UNIQUE,
+    paymentId INT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    reason ENUM('Customer cancellation', 'Organizer cancellation') NOT NULL,
+    refundedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_refunds_ticket FOREIGN KEY (ticketId) REFERENCES Tickets(ticketId),
+    CONSTRAINT fk_refunds_payment FOREIGN KEY (paymentId) REFERENCES PaymentMethods(paymentId),
+    CONSTRAINT chk_refund_amount_non_neg CHECK (amount >= 0)
+);
+
 CREATE TABLE TicketOwnershipHistory (
     historyId INT AUTO_INCREMENT PRIMARY KEY,
     ticketId INT NOT NULL,
@@ -309,6 +334,13 @@ CREATE TABLE Comments (
     -- Additional dynamic parameters (verifying they attended the performance, that it
     -- has taken place, and that their ticket status was not cancelled) is handled from backend.
 );
+
+CREATE INDEX idx_performances_search ON Performances (status, dateTime, venueId, eventId);
+CREATE INDEX idx_venues_lookup ON Venues (postalCode, address, city);
+CREATE INDEX idx_orders_customer_time ON Orders (customerId, purchaseTime, performanceId);
+CREATE INDEX idx_tickets_performance_section_status ON Tickets (performanceId, sectionId, status);
+CREATE INDEX idx_resale_listings_status_date ON ResaleListings (status, postedDate, sellerId);
+CREATE INDEX idx_ownership_history_date_seller ON TicketOwnershipHistory (transactionDate, sellerId);
 
 -- ============================================================================
 -- TRIGGERS

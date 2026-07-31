@@ -2,6 +2,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Q1-Q7 search/browse queries. Each method should build and run one SQL
@@ -84,26 +87,75 @@ public class SearchQueries {
     }
 
     // Q2: upcoming performances at venues in the same or adjacent postal codes.
-    public void searchByPostalCode(/* postalCode */) {
-        // TODO
+    public void searchByPostalCode(String postalCode) {
+        String normalized = postalCode.replaceAll("\\s+", "").toUpperCase();
+        if (normalized.isBlank()) throw new IllegalArgumentException("Postal code is required.");
+        String prefix = normalized.substring(0, Math.min(3, normalized.length()));
+        String extra = " AND (REPLACE(UPPER(v.postalCode), ' ', '') = ? OR EXISTS (" +
+            "SELECT 1 FROM PostalCodeAdjacency pa WHERE pa.postalPrefix = ? " +
+            "AND pa.adjacentPrefix = LEFT(REPLACE(UPPER(v.postalCode), ' ', ''), 3)))";
+        runFiltered(extra, List.of(normalized, prefix), new PerformanceFilter());
     }
 
     // Q3: exact address match -> that venue's upcoming performances.
-    public void searchByAddress(/* address */) {
-        // TODO
+    public void searchByAddress(String address) {
+        if (address == null || address.isBlank()) throw new IllegalArgumentException("Address is required.");
+        runFiltered(" AND v.address = ?", List.of(address.trim()), new PerformanceFilter());
     }
 
     // Q4: temporal refinement of Q1/Q2/Q3 — add a date range + minimum
     // available ticket count filter.
-    public void searchWithDateRange(/* ..., startDate, endDate, minAvailable */) {
-        // TODO
+    public void searchWithDateRange(LocalDateTime start, LocalDateTime end, int minAvailable) {
+        PerformanceFilter filter = new PerformanceFilter();
+        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        filteredSearch(filter);
     }
 
     // Q5: general filtered search — city, segment/genre, date range, price
     // range on cheapest available ticket, min available count, reserved
     // seating vs GA — all combinable.
-    public void filteredSearch(/* filters object/params */) {
-        // TODO
+    public void filteredSearch(PerformanceFilter filter) {
+        if (filter == null) filter = new PerformanceFilter();
+        runFiltered("", List.of(), filter);
+    }
+
+    /** Optional Q5 filters; any non-null property is combined with the others. */
+    public static final class PerformanceFilter {
+        public String segment, genre, city;
+        public LocalDateTime start, end;
+        public Double minPrice, maxPrice;
+        public Integer minAvailable;
+        public Boolean reservedSeating;
+    }
+
+    private void runFiltered(String extraWhere, List<Object> extraParameters, PerformanceFilter f) {
+        StringBuilder sql = new StringBuilder(
+            "SELECT p.performanceId, p.name, e.title, v.name AS venue, v.city, p.dateTime, " +
+            "MIN(pt.price) AS cheapestPrice, SUM(sa.availableSeatCount) AS available " +
+            "FROM Performances p JOIN Events e ON e.eventId=p.eventId JOIN Taxonomy tx ON tx.taxonomyId=e.taxonomyId " +
+            "JOIN Venues v ON v.venueId=p.venueId JOIN SectionAvailability sa ON sa.performanceId=p.performanceId " +
+            "JOIN PerformanceSectionAssignments psa ON psa.performanceId=sa.performanceId AND psa.sectionId=sa.sectionId " +
+            "JOIN PriceTiers pt ON pt.tierId=psa.tierId WHERE p.status='Scheduled' AND p.dateTime > NOW()");
+        List<Object> params = new ArrayList<>(extraParameters);
+        sql.append(extraWhere);
+        if (f.segment != null) { sql.append(" AND tx.segment = ?"); params.add(f.segment); }
+        if (f.genre != null) { sql.append(" AND tx.genre = ?"); params.add(f.genre); }
+        if (f.city != null) { sql.append(" AND v.city = ?"); params.add(f.city); }
+        if (f.start != null) { sql.append(" AND p.dateTime >= ?"); params.add(f.start); }
+        if (f.end != null) { sql.append(" AND p.dateTime < ?"); params.add(f.end); }
+        if (f.reservedSeating != null) { sql.append(" AND EXISTS (SELECT 1 FROM Sections s WHERE s.venueId=v.venueId AND s.isReservedSeating=?)"); params.add(f.reservedSeating); }
+        sql.append(" GROUP BY p.performanceId, p.name, e.title, v.name, v.city, p.dateTime");
+        if (f.minAvailable != null) { sql.append(" HAVING SUM(sa.availableSeatCount) >= ?"); params.add(f.minAvailable); }
+        if (f.minPrice != null) { sql.append(f.minAvailable == null ? " HAVING" : " AND").append(" MIN(pt.price) >= ?"); params.add(f.minPrice); }
+        if (f.maxPrice != null) { sql.append((f.minAvailable == null && f.minPrice == null) ? " HAVING" : " AND").append(" MIN(pt.price) <= ?"); params.add(f.maxPrice); }
+        sql.append(" ORDER BY p.dateTime, cheapestPrice");
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i=0;i<params.size();i++) ps.setObject(i+1, params.get(i));
+            try (ResultSet rs=ps.executeQuery()) {
+                System.out.printf("%-5s %-28s %-20s %-18s %-20s %10s %10s%n", "ID", "Performance", "Venue", "City", "Date", "From $", "Available");
+                while(rs.next()) System.out.printf("%-5d %-28s %-20s %-18s %-20s %10.2f %10d%n", rs.getInt(1),rs.getString(2),rs.getString(4),rs.getString(5),rs.getTimestamp(6),rs.getDouble(7),rs.getInt(8));
+            }
+        } catch(SQLException e) { throw new RuntimeException("Search failed.", e); }
     }
 
     /**

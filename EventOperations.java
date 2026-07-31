@@ -105,6 +105,10 @@ public class EventOperations {
      * Adds a performance to an event.
      */
     public int addPerformance(int eventId, int venueId, java.time.LocalDateTime dateTime) {
+        return addPerformance(eventId, venueId, "Performance", dateTime);
+    }
+
+    public int addPerformance(int eventId, int venueId, String name, java.time.LocalDateTime dateTime) {
         // check that the event exists and venue exists, and that the dateTime is in the future
         if (eventId <= 0) {
             throw new IllegalArgumentException("Invalid event ID.");
@@ -116,14 +120,18 @@ public class EventOperations {
             throw new IllegalArgumentException("Performance date and time must be in the future.");
         }
         
-        String sql = "INSERT INTO Performances (eventId, venueId, dateTime, status) "
-                   + "VALUES (?, ?, ?, 'Scheduled')";
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Performance name is required.");
+        }
+        String sql = "INSERT INTO Performances (eventId, venueId, name, dateTime, status) "
+                   + "VALUES (?, ?, ?, ?, 'Scheduled')";
 
         try (PreparedStatement statement = conn.prepareStatement(
                 sql, Statement.RETURN_GENERATED_KEYS)) {
             statement.setInt(1, eventId);
             statement.setInt(2, venueId);
-            statement.setObject(3, dateTime);
+            statement.setString(3, name.trim());
+            statement.setObject(4, dateTime);
             statement.executeUpdate();
 
             try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
@@ -159,8 +167,13 @@ public class EventOperations {
     // Insert into PerformanceSectionAssignments (sectionId, performanceId, tierId).
     // Every section of the venue must be assigned exactly one tier for this performance.
     public void assignSectionsToTiers(int performanceId, Map<Integer, Integer> sectionToTierMap) {
+        if (sectionToTierMap == null || sectionToTierMap.isEmpty()) {
+            throw new IllegalArgumentException("At least one section assignment is required.");
+        }
         String sql = "INSERT INTO PerformanceSectionAssignments (sectionId, performanceId, tierId) VALUES (?, ?, ?)";
-        try (PreparedStatement statement = conn.prepareStatement(sql)) {
+        try {
+            conn.setAutoCommit(false);
+            try (PreparedStatement statement = conn.prepareStatement(sql)) {
             for (Map.Entry<Integer, Integer> entry : sectionToTierMap.entrySet()) {
                 int sectionId = entry.getKey();
                 int tierId = entry.getValue();
@@ -170,8 +183,13 @@ public class EventOperations {
                 statement.addBatch();
             }
             statement.executeBatch();
+            }
+            conn.commit();
         } catch (SQLException e) {
+            try { conn.rollback(); } catch (SQLException ignored) { }
             throw new RuntimeException("Failed to assign sections to tiers: " + e.getMessage(), e);
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
         }
     }
 
@@ -273,25 +291,37 @@ public class EventOperations {
     // Set Performances.status = 'Cancelled', refund every sold ticket for it,
     // and record the cancellation (Tickets.status = 'Cancelled by organizer').
     public void cancelPerformance(int performanceId) {
-        String updatePerformanceSql = "UPDATE Performances SET status = 'Cancelled' WHERE performanceId = ?";
-        String refundTicketsSql = "UPDATE Tickets SET status = 'Cancelled by organizer' WHERE performanceId = ? AND status = 'Active'";
-
-        try (PreparedStatement updatePerformanceStmt = conn.prepareStatement(updatePerformanceSql);
-             PreparedStatement refundTicketsStmt = conn.prepareStatement(refundTicketsSql)) {
-
-            // Cancel the performance
+        String updatePerformanceSql = "UPDATE Performances SET status = 'Cancelled', cancelledAt = NOW() WHERE performanceId = ? AND status = 'Scheduled'";
+        try {
+            conn.setAutoCommit(false);
+            try (PreparedStatement updatePerformanceStmt = conn.prepareStatement(updatePerformanceSql)) {
             updatePerformanceStmt.setInt(1, performanceId);
             int rowsAffected = updatePerformanceStmt.executeUpdate();
             if (rowsAffected == 0) {
-                throw new RuntimeException("No performance found with ID: " + performanceId);
+                throw new IllegalArgumentException("Performance does not exist or has already been cancelled.");
             }
-
-            // Refund sold tickets
-            refundTicketsStmt.setInt(1, performanceId);
-            refundTicketsStmt.executeUpdate();
-
+            }
+            try (PreparedStatement refund = conn.prepareStatement(
+                     "INSERT INTO Refunds (ticketId, paymentId, amount, reason) " +
+                     "SELECT t.ticketId, o.paymentId, t.price, 'Organizer cancellation' " +
+                     "FROM Tickets t JOIN Orders o ON o.orderId = t.orderId " +
+                     "WHERE t.performanceId = ? AND t.status = 'Active'" );
+                 PreparedStatement withdraw = conn.prepareStatement(
+                     "UPDATE ResaleListings rl JOIN Tickets t ON t.ticketId = rl.ticketId " +
+                     "SET rl.status = 'Withdrawn' WHERE t.performanceId = ? AND rl.status = 'Active'");
+                 PreparedStatement tickets = conn.prepareStatement(
+                     "UPDATE Tickets SET status = 'Cancelled by organizer', cancelledAt = NOW() " +
+                     "WHERE performanceId = ? AND status = 'Active'")) {
+                refund.setInt(1, performanceId); refund.executeUpdate();
+                withdraw.setInt(1, performanceId); withdraw.executeUpdate();
+                tickets.setInt(1, performanceId); tickets.executeUpdate();
+            }
+            conn.commit();
         } catch (SQLException e) {
+            try { conn.rollback(); } catch (SQLException ignored) { }
             throw new RuntimeException("Failed to cancel performance.", e);
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
         }
     }
 }
