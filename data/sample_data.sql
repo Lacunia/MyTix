@@ -65,10 +65,10 @@ INSERT INTO EventLineups (artistId, eventId, billingOrder) VALUES
     (4, 2, 'Headliner'),
     (3, 3, 'Headliner');
 
-INSERT INTO Performances (performanceId, eventId, venueId, dateTime, status) VALUES
-    (1, 1, 1, '2026-09-12 19:30:00', 'Scheduled'),
-    (2, 2, 2, '2026-10-03 20:00:00', 'Scheduled'),
-    (3, 3, 1, '2026-08-15 20:00:00', 'Cancelled');
+INSERT INTO Performances (performanceId, eventId, venueId, name, dateTime, status, cancelledAt) VALUES
+    (1, 1, 1, 'Northern Lights - Toronto', '2026-09-12 19:30:00', 'Scheduled', NULL),
+    (2, 2, 2, 'City Stories Opening Night', '2026-10-03 20:00:00', 'Scheduled', NULL),
+    (3, 3, 1, 'Friday Night Laughs - Cancelled', '2026-08-15 20:00:00', 'Cancelled', '2026-07-30 10:00:00');
 
 -- Price tiers and the section-to-tier mapping for each performance
 INSERT INTO PriceTiers (tierId, performanceId, tierName, price) VALUES

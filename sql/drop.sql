@@ -1,10 +1,12 @@
--- Drop views, tables, and triggers
+-- Drop the complete MyTix schema. This file is safe to run on an empty schema.
 
 DROP VIEW IF EXISTS PerformanceCheapestPrice;
 DROP VIEW IF EXISTS SectionAvailability;
 DROP VIEW IF EXISTS AvailableSeatsByPerformance;
 DROP VIEW IF EXISTS EventPerformanceLocations;
 
+DROP TABLE IF EXISTS Refunds;
+DROP TABLE IF EXISTS PostalCodeAdjacency;
 DROP TABLE IF EXISTS Comments;
 DROP TABLE IF EXISTS ResaleListings;
 DROP TABLE IF EXISTS TicketOwnershipHistory;

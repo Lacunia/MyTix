@@ -16,6 +16,7 @@
 
 # Package Files #
 *.jar
+!mysql-connector-java-8.0.29.jar
 *.war
 *.nar
 *.ear
