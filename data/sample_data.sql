@@ -52,7 +52,7 @@ BEGIN
 
     INSERT INTO Taxonomy (segment, genre) VALUES
       ('Music', 'Rock'), ('Music', 'Pop'), ('Music', 'Jazz'), ('Music', 'Electronic'),
-      ('Theatre', 'Musical'), ('Theatre', 'Drama'), ('Sports', 'Hockey'), ('Comedy', 'Stand-up');
+      ('Arts & Theatre', 'Musical'), ('Arts & Theatre', 'Drama'), ('Sports', 'Hockey'), ('Comedy', 'Stand-up');
 
     -- Eight venues, including three close downtown Toronto locations.
     INSERT INTO Venues (name, latitude, longitude, address, postalCode, city, country) VALUES
@@ -170,11 +170,19 @@ BEGIN
         IF ticket_no <= 20 THEN
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
           VALUES (order_id, perf, (perf - 1) * 3 + 1,
-                  (SELECT MIN(s.seatId) + ticket_no - 1 FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId WHERE r.sectionId=(perf-1)*3+1), 130.00, customer, 'Active');
+                  (SELECT ordered.seatId FROM (
+                     SELECT st.seatId, ROW_NUMBER() OVER (ORDER BY r.rowName, st.seatNumber) AS seat_position
+                     FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId
+                     WHERE r.sectionId=(perf-1)*3+1
+                   ) ordered WHERE ordered.seat_position=ticket_no), 130.00, customer, 'Active');
         ELSEIF ticket_no <= 40 THEN
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
           VALUES (order_id, perf, (perf - 1) * 3 + 2,
-                  (SELECT MIN(s.seatId) + ticket_no - 21 FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId WHERE r.sectionId=(perf-1)*3+2), 90.00, customer, 'Active');
+                  (SELECT ordered.seatId FROM (
+                     SELECT st.seatId, ROW_NUMBER() OVER (ORDER BY r.rowName, st.seatNumber) AS seat_position
+                     FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId
+                     WHERE r.sectionId=(perf-1)*3+2
+                   ) ordered WHERE ordered.seat_position=ticket_no-20), 90.00, customer, 'Active');
         ELSE
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
           VALUES (order_id, perf, (perf - 1) * 3 + 3, NULL, 50.00, customer, 'Active');
@@ -207,15 +215,18 @@ BEGIN
     -- A >7-day show with reserved availability: row A has nonconsecutive seats left;
     -- row B still has ten consecutive seats.  It also has abundant GA capacity.
     SET n = 1;
-    WHILE n <= 6 DO
+    WHILE n <= 5 DO
       SET customer = 6 + n;
       INSERT INTO Orders (customerId, performanceId, paymentId, purchaseTime, totalPaid)
       VALUES (customer, 34, 1 + n, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL n DAY), 130.00);
       SET order_id = LAST_INSERT_ID();
       INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
       VALUES (order_id, 34, ((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+1,
-              (SELECT MIN(s.seatId) + (n * 2) - 2 FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId
-               WHERE r.sectionId=((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+1), 140.00, customer, 'Active');
+              (SELECT ordered.seatId FROM (
+                 SELECT st.seatId, ROW_NUMBER() OVER (ORDER BY r.rowName, st.seatNumber) AS seat_position
+                 FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId
+                 WHERE r.sectionId=((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+1
+               ) ordered WHERE ordered.seat_position=(n*2)-1), 140.00, customer, 'Active');
       SET n = n + 1;
     END WHILE;
     -- Extra purchases ensure two customers each bought 11 tickets and listed

@@ -69,7 +69,7 @@ public class DbConnector {
     private static void customerMenu(Connection c, Scanner in, int customerId) throws SQLException {
         BookingOperations booking = new BookingOperations(c); ResaleOperations resale = new ResaleOperations(c); ReviewOperations reviews = new ReviewOperations(c);
         while (true) {
-            System.out.println("\nCustomer: 1) Reserved booking 2) GA booking 3) Cancel tickets 4) List ticket 5) Withdraw listing 6) Buy listing 7) Review attended event 0) Logout");
+            System.out.println("\nCustomer: 1) Reserved booking 2) GA booking 3) Cancel tickets 4) List ticket 5) Withdraw listing 6) Buy listing 7) Review attended event 8) Delete account 0) Logout");
             switch (in.nextLine().trim()) {
                 case "1" -> { int p=performance(c,in); booking.bookReservedSeats(customerId,p,payment(c,customerId),seats(c,p,in)); }
                 case "2" -> { int p=performance(c,in); int s=section(c,p,in); System.out.print("Quantity: "); booking.bookGeneralAdmission(customerId,p,payment(c,customerId),s,Integer.parseInt(in.nextLine())); }
@@ -78,6 +78,7 @@ public class DbConnector {
                 case "5" -> { System.out.print("Listing number: "); resale.withdrawListing(Integer.parseInt(in.nextLine()),customerId); }
                 case "6" -> { System.out.print("Listing number: "); resale.purchaseListing(Integer.parseInt(in.nextLine()),customerId,payment(c,customerId)); }
                 case "7" -> { System.out.print("Exact event title: "); String title=in.nextLine(); System.out.print("Comment: "); String text=in.nextLine(); System.out.print("Event rating (1-5): "); int er=Integer.parseInt(in.nextLine()); System.out.print("Venue rating (1-5): "); System.out.println(reviews.insertReview(customerId,title,text,er,Integer.parseInt(in.nextLine())) ? "Review added." : "You have not attended this event, or already reviewed it."); }
+                case "8" -> { System.out.print("Delete this account permanently? (y/N): "); if (in.nextLine().trim().equalsIgnoreCase("y") && new UserOperations(c).deleteUser(customerId)) return; }
                 case "0" -> { return; }
                 default -> System.out.println("Invalid choice.");
             }
@@ -86,10 +87,11 @@ public class DbConnector {
 
     private static void organizerMenu(Connection c, Scanner in, int organizerId) throws SQLException {
         EventOperations events = new EventOperations(c);
+        OrganizerToolkit toolkit = new OrganizerToolkit(c);
         while (true) {
-            System.out.println("\nOrganizer: 1) Create event 2) Add performance 3) Define tier 4) Assign section/tier 5) Set resale cap 6) Update tier price 7) Block seat 8) Cancel performance 0) Logout");
+            System.out.println("\nOrganizer: 1) Create event 2) Add performance 3) Define tier 4) Assign section/tier 5) Set resale cap 6) Update tier price 7) Block seat 8) Cancel performance 9) Unblock seat 10) Add artist/lineup 11) Pricing suggestions 12) Delete account 0) Logout");
             switch (in.nextLine().trim()) {
-                case "1" -> { System.out.print("Segment: "); String segment=in.nextLine(); System.out.print("Genre: "); String genre=in.nextLine(); System.out.print("Event title: "); String title=in.nextLine(); System.out.print("Description: "); String desc=in.nextLine(); System.out.print("Resale cap multiplier (e.g. 1.20): "); events.createEvent(organizerId,events.createTaxonomy(segment,genre),title,desc,Double.parseDouble(in.nextLine())); }
+                case "1" -> { System.out.print("Ticketmaster segment (e.g. Music, Arts & Theatre, Sports): "); String segment=in.nextLine(); System.out.print("Genre: "); String genre=in.nextLine(); System.out.print("Event title: "); String title=in.nextLine(); System.out.print("Description: "); String desc=in.nextLine(); System.out.print("Resale cap multiplier (e.g. 1.20): "); events.createEvent(organizerId,events.createTaxonomy(segment,genre),title,desc,Double.parseDouble(in.nextLine())); }
                 case "2" -> { int e=ownedEvent(c,in,organizerId); int v=venue(c,in); System.out.print("Performance name: "); String n=in.nextLine(); System.out.print("Date/time (YYYY-MM-DDTHH:MM): "); events.addPerformance(e,v,n,LocalDateTime.parse(in.nextLine())); }
                 case "3" -> { int p=ownedPerformance(c,in,organizerId); System.out.print("Tier name: "); String n=in.nextLine(); System.out.print("Price: "); events.definePriceTiers(p,List.of(new EventOperations.Tier(n,new BigDecimal(in.nextLine())))); }
                 case "4" -> { int p=ownedPerformance(c,in,organizerId); int s=section(c,p,in); int t=tier(c,p,in); events.assignSectionsToTiers(p,Map.of(s,t)); }
@@ -97,6 +99,10 @@ public class DbConnector {
                 case "6" -> { int p=ownedPerformance(c,in,organizerId); int t=tier(c,p,in); System.out.print("New price: "); System.out.println(events.updateTierPrice(p,t,Double.parseDouble(in.nextLine())) ? "Price updated." : "Price cannot change after a sale."); }
                 case "7" -> { int p=ownedPerformance(c,in,organizerId); System.out.println(events.blockSeat(p,seats(c,p,in).get(0)) ? "Seat blocked." : "Seat has been sold."); }
                 case "8" -> events.cancelPerformance(ownedPerformance(c,in,organizerId));
+                case "9" -> { int p=ownedPerformance(c,in,organizerId); events.unblockSeat(p,seats(c,p,in).get(0)); System.out.println("Seat unblocked."); }
+                case "10" -> { int e=ownedEvent(c,in,organizerId); int a=artist(c,in,events); System.out.print("Billing order (Headliner, Special guest, Opening act): "); events.addArtistToEvent(e,a,in.nextLine().trim()); System.out.println("Artist added to the lineup."); }
+                case "11" -> pricingSuggestions(c,in,organizerId,toolkit);
+                case "12" -> { System.out.print("Delete this account permanently? (y/N): "); if (in.nextLine().trim().equalsIgnoreCase("y") && new UserOperations(c).deleteUser(organizerId)) return; }
                 case "0" -> { return; }
                 default -> System.out.println("Invalid choice.");
             }
@@ -140,6 +146,8 @@ public class DbConnector {
     private static int section(Connection c,int p,String n)throws SQLException{return one(c,"SELECT s.sectionId FROM Sections s JOIN PerformanceSectionAssignments x ON x.sectionId=s.sectionId WHERE x.performanceId=? AND s.sectionName=?",p,n);}
     private static int tier(Connection c,int p,Scanner in)throws SQLException{System.out.print("Tier ID (optional; press Enter for tier name): ");String id=in.nextLine().trim();if(!id.isBlank())return one(c,"SELECT tierId FROM PriceTiers WHERE performanceId=? AND tierId=?",p,Integer.parseInt(id));System.out.print("Tier name: ");return tier(c,p,in.nextLine());}
     private static int tier(Connection c,int p,String n)throws SQLException{return one(c,"SELECT tierId FROM PriceTiers WHERE performanceId=? AND tierName=?",p,n);}
+    private static int artist(Connection c,Scanner in,EventOperations events)throws SQLException{System.out.print("Artist ID (optional; press Enter to find or create by name): ");String id=in.nextLine().trim();if(!id.isBlank())return one(c,"SELECT artistId FROM Artists WHERE artistId=?",Integer.parseInt(id));System.out.print("Artist name: ");return events.findOrCreateArtist(in.nextLine());}
+    private static void pricingSuggestions(Connection c,Scanner in,int organizerId,OrganizerToolkit toolkit)throws SQLException{int v=venue(c,in);System.out.print("Genre: ");String g=in.nextLine().trim();toolkit.suggestTierStructure(v,g);toolkit.suggestTierPrices(v,g);System.out.print("Estimate a price change too? (y/N): ");if(in.nextLine().trim().equalsIgnoreCase("y")){int p=ownedPerformance(c,in,organizerId);int t=tier(c,p,in);System.out.print("Proposed price: ");toolkit.estimateRevenueImpact(t,new BigDecimal(in.nextLine().trim()));}}
     private static int payment(Connection c,int u)throws SQLException{return one(c,"SELECT paymentId FROM PaymentMethods WHERE customerId=? ORDER BY paymentId DESC LIMIT 1",u);}
     private static int one(Connection c,String sql,Object...v)throws SQLException{try(PreparedStatement p=c.prepareStatement(sql)){for(int i=0;i<v.length;i++)p.setObject(i+1,v[i]);try(ResultSet r=p.executeQuery()){if(!r.next())throw new IllegalArgumentException("No matching record found.");return r.getInt(1);}}}
     private static List<Integer> seats(Connection c,int p,Scanner in)throws SQLException{int sec=section(c,p,in);System.out.print("Row name: ");String row=in.nextLine();System.out.print("Seat number(s), comma-separated: ");String ns=in.nextLine();List<Integer>out=new ArrayList<>();for(String n:ns.split(","))out.add(one(c,"SELECT st.seatId FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId WHERE r.sectionId=? AND r.rowName=? AND st.seatNumber=?",sec,row,Integer.parseInt(n.trim())));return out;}

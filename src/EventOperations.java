@@ -44,6 +44,11 @@ public class EventOperations {
         if (segment == null || segment.isBlank() || genre == null || genre.isBlank()) {
             throw new IllegalArgumentException("Segment and genre are required.");
         }
+        // Ticketmaster names this segment "Arts & Theatre". Accept the
+        // common shorthand without storing a second, incompatible taxonomy.
+        if (segment.trim().equalsIgnoreCase("Theatre")) {
+            segment = "Arts & Theatre";
+        }
 
         String sql = "INSERT INTO Taxonomy (segment, genre) VALUES (?, ?) "
                    + "ON DUPLICATE KEY UPDATE taxonomyId = LAST_INSERT_ID(taxonomyId)";
@@ -99,6 +104,49 @@ public class EventOperations {
         }
 
         throw new SQLException("Event was created, but its generated ID was not returned.");
+    }
+
+    /** Finds an artist by exact name or creates the artist if they are new. */
+    public int findOrCreateArtist(String name) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Artist name is required.");
+        }
+        try (PreparedStatement find = conn.prepareStatement(
+                "SELECT artistId FROM Artists WHERE name = ? ORDER BY artistId LIMIT 1")) {
+            find.setString(1, name.trim());
+            try (ResultSet rs = find.executeQuery()) {
+                if (rs.next()) return rs.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to look up artist.", e);
+        }
+        try (PreparedStatement insert = conn.prepareStatement(
+                "INSERT INTO Artists (name) VALUES (?)", Statement.RETURN_GENERATED_KEYS)) {
+            insert.setString(1, name.trim());
+            insert.executeUpdate();
+            try (ResultSet keys = insert.getGeneratedKeys()) {
+                if (keys.next()) return keys.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to create artist.", e);
+        }
+        throw new RuntimeException("Artist was created, but its ID was not returned.");
+    }
+
+    /** Adds an artist to an event with the required billing order. */
+    public void addArtistToEvent(int eventId, int artistId, String billingOrder) {
+        if (!List.of("Headliner", "Special guest", "Opening act").contains(billingOrder)) {
+            throw new IllegalArgumentException("Billing order must be Headliner, Special guest, or Opening act.");
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO EventLineups (artistId, eventId, billingOrder) VALUES (?, ?, ?)")) {
+            ps.setInt(1, artistId);
+            ps.setInt(2, eventId);
+            ps.setString(3, billingOrder);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to add artist to this event (the artist may already be listed).", e);
+        }
     }
 
     /**
@@ -234,6 +282,7 @@ public class EventOperations {
             "       AND psa.sectionId = t.sectionId " +
             "      WHERE t.performanceId = ? " +
             "        AND psa.tierId = ? " +
+            "        AND t.status = 'Active' " +
             "  )";
 
         try (PreparedStatement statement = conn.prepareStatement(sql)) {

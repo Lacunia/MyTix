@@ -354,7 +354,8 @@ public class Reports {
         String topCancellingCustomers =
             "SELECT c.customerId, u.name AS customerName, COUNT(*) AS cancelledTicketCount " +
             "FROM Tickets t " +
-            "JOIN Customers c ON c.customerId = t.currentOwnerId " +
+            "JOIN Orders o ON o.orderId = t.orderId " +
+            "JOIN Customers c ON c.customerId = o.customerId " +
             "JOIN Users u ON u.userId = c.customerId " +
             "WHERE t.status = 'Cancelled by customer' " +
             "  AND YEAR(t.cancelledAt) = ? " +
@@ -363,10 +364,10 @@ public class Reports {
             "    SELECT MAX(count) " +
             "    FROM ( " +
             "        SELECT COUNT(*) AS count " +
-            "        FROM Tickets t2 " +
+            "        FROM Tickets t2 JOIN Orders o2 ON o2.orderId = t2.orderId " +
             "        WHERE t2.status = 'Cancelled by customer' " +
             "          AND YEAR(t2.cancelledAt) = ? " +
-            "        GROUP BY t2.currentOwnerId " +
+            "        GROUP BY o2.customerId " +
             "    ) cancelCounts " +
             ")";
 
@@ -454,13 +455,25 @@ public class Reports {
     // fraction of listings priced exactly at cap; top 10 events by resale
     // volume in a period.
     public void resaleReport(LocalDate startDate, LocalDate endDate) {
-        String sql = "SELECT e.eventId,e.title,COUNT(DISTINCT h.historyId) completedResales,AVG(h.transactionPrice-t.price) avgMarkup, " +
-            "100*SUM(CASE WHEN ABS(rl.resalePrice-(t.price*e.resalePriceCap))<0.005 THEN 1 ELSE 0 END)/NULLIF(COUNT(rl.listingId),0) exactCapPct " +
-            "FROM Events e JOIN Performances p ON p.eventId=e.eventId JOIN Tickets t ON t.performanceId=p.performanceId " +
-            "LEFT JOIN TicketOwnershipHistory h ON h.ticketId=t.ticketId AND h.transactionDate>=? AND h.transactionDate<? " +
-            "LEFT JOIN ResaleListings rl ON rl.ticketId=t.ticketId AND rl.postedDate>=? AND rl.postedDate<? " +
-            "GROUP BY e.eventId,e.title ORDER BY completedResales DESC LIMIT 10";
-        printQuery(sql, startDate, endDate.plusDays(1), startDate, endDate.plusDays(1));
+        String metrics =
+            "WITH completed AS ( " +
+            "  SELECT p.eventId, COUNT(*) completedResales, AVG(h.transactionPrice-t.price) avgMarkup " +
+            "  FROM TicketOwnershipHistory h JOIN Tickets t ON t.ticketId=h.ticketId " +
+            "  JOIN Performances p ON p.performanceId=t.performanceId " +
+            "  WHERE h.transactionDate>=? AND h.transactionDate<? GROUP BY p.eventId " +
+            "), listings AS ( " +
+            "  SELECT p.eventId, 100*AVG(CASE WHEN ABS(rl.resalePrice-(t.price*e.resalePriceCap))<0.005 THEN 1 ELSE 0 END) exactCapPct " +
+            "  FROM ResaleListings rl JOIN Tickets t ON t.ticketId=rl.ticketId " +
+            "  JOIN Performances p ON p.performanceId=t.performanceId JOIN Events e ON e.eventId=p.eventId " +
+            "  WHERE rl.postedDate>=? AND rl.postedDate<? GROUP BY p.eventId " +
+            ") SELECT e.eventId,e.title,COALESCE(c.completedResales,0) completedResales, " +
+            "COALESCE(c.avgMarkup,0) avgMarkup,COALESCE(l.exactCapPct,0) exactCapPct " +
+            "FROM Events e LEFT JOIN completed c ON c.eventId=e.eventId LEFT JOIN listings l ON l.eventId=e.eventId ";
+        LocalDate endExclusive = endDate.plusDays(1);
+        System.out.println("=== R8: Resale metrics for every event ===");
+        printQuery(metrics + "ORDER BY e.eventId", startDate, endExclusive, startDate, endExclusive);
+        System.out.println("=== R8: Top 10 events by completed resale volume ===");
+        printQuery(metrics + "ORDER BY completedResales DESC, e.eventId LIMIT 10", startDate, endExclusive, startDate, endExclusive);
     }
 
     private void printQuery(String sql, Object... params) {

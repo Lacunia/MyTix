@@ -110,15 +110,17 @@ public class UserOperations {
      * Deletes a user profile. Relies on the schema's foreign-key CONSTRAINTS
      * to prevent deleting anyone with real order/ticket/event history
      */
-    public void deleteUser(int userId) {
+    public boolean deleteUser(int userId) {
         String sql = "DELETE FROM Users WHERE userId = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, userId);
             int rows = ps.executeUpdate();
             if (rows == 0) {
                 System.out.println("No user found with ID " + userId + ".");
+                return false;
             } else {
                 System.out.println("User " + userId + " deleted.");
+                return true;
             }
         } catch (SQLException e) {
             // MySQL error 1451: "Cannot delete or update a parent row: a
@@ -126,6 +128,7 @@ public class UserOperations {
             if (e.getErrorCode() == 1451) {
                 System.out.println("Cannot delete user " + userId +
                     ": they have existing orders, tickets, events, or other history that must be retained.");
+                return false;
             } else {
                 throw new RuntimeException(e);
             }

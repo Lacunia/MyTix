@@ -97,7 +97,7 @@ public class BookingOperations {
             int orderId = insertOrder(customerId, performanceId, paymentId, totalPrice);
 
             // Insert the tickets -
-            // The TRIGGER unique_seat_per_performance helps prevent double-booking; 
+            // The unique active-seat constraint prevents double-booking;
             // a duplicate-key error here means someone else booked one of these seats a moment ago.
             String sectionLookupSql =
                 "SELECT sec.sectionId " +

@@ -215,14 +215,20 @@ CREATE TABLE Tickets (
     currentOwnerId INT NOT NULL,
     status ENUM('Active', 'Cancelled by customer', 'Cancelled by organizer') NOT NULL DEFAULT 'Active',
     cancelledAt DATETIME,
+    -- Keep cancelled reserved seats in the ticket history without reserving
+    -- their seat inventory. NULL values do not collide under a UNIQUE key.
+    activeSeatId INT GENERATED ALWAYS AS (
+        CASE WHEN status = 'Active' THEN seatId ELSE NULL END
+    ) STORED,
 
     CONSTRAINT fk_tickets_order FOREIGN KEY (orderId) REFERENCES Orders(orderId),
     CONSTRAINT fk_tickets_performance FOREIGN KEY (performanceId) REFERENCES Performances(performanceId),
     CONSTRAINT fk_tickets_section FOREIGN KEY (sectionId) REFERENCES Sections(sectionId),
     CONSTRAINT fk_tickets_seat FOREIGN KEY (seatId) REFERENCES Seats(seatId),
     CONSTRAINT fk_tickets_owner FOREIGN KEY (currentOwnerId) REFERENCES Customers(customerId),
-    -- A given seat can be sold at most once per performance
-    CONSTRAINT unique_seat_per_performance UNIQUE (performanceId, seatId),
+    -- A given seat can be actively sold at most once per performance. A
+    -- cancelled ticket deliberately frees its seat for a later sale.
+    CONSTRAINT unique_active_seat_per_performance UNIQUE (performanceId, activeSeatId),
     CONSTRAINT chk_ticket_price_non_neg CHECK (price >= 0),
     CONSTRAINT chk_tickets_cancelled_at CHECK (
         (status = 'Active' AND cancelledAt IS NULL) OR
