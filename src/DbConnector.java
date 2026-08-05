@@ -15,7 +15,7 @@ public class DbConnector {
             System.out.println("Connected! Welcome to MyTix!");
             while (true) {
                 System.out.println("\n1) Browse as guest  2) Login as customer  3) Login as organizer  4) Sign up as customer  5) Sign up as organizer  0) Exit");
-                switch (in.nextLine().trim()) {
+                try { switch (in.nextLine().trim()) {
                     case "1" -> guestMenu(conn, in);
                     case "2" -> { Integer id = login(conn, in, "Customer"); if (id != null) customerMenu(conn, in, id); }
                     case "3" -> { Integer id = login(conn, in, "Organizer"); if (id != null) organizerMenu(conn, in, id); }
@@ -23,7 +23,7 @@ public class DbConnector {
                     case "5" -> { int id = signUpOrganizer(conn, in); System.out.println("Organizer account created. You are now logged in."); organizerMenu(conn, in, id); }
                     case "0" -> { return; }
                     default -> System.out.println("Invalid choice.");
-                }
+                } } catch (Exception e) { printError(e); }
             }
         }
     }
@@ -70,7 +70,7 @@ public class DbConnector {
         BookingOperations booking = new BookingOperations(c); ResaleOperations resale = new ResaleOperations(c); ReviewOperations reviews = new ReviewOperations(c);
         while (true) {
             System.out.println("\nCustomer: 1) Reserved booking 2) GA booking 3) Cancel tickets 4) List ticket 5) Withdraw listing 6) Buy listing 7) Review attended event 8) Delete account 0) Logout");
-            switch (in.nextLine().trim()) {
+            try { switch (in.nextLine().trim()) {
                 case "1" -> { int p=performance(c,in); booking.bookReservedSeats(customerId,p,payment(c,customerId),seats(c,p,in,false)); }
                 case "2" -> { int p=performance(c,in); int s=section(c,p,in,false); System.out.print("Quantity: "); booking.bookGeneralAdmission(customerId,p,payment(c,customerId),s,Integer.parseInt(in.nextLine())); }
                 case "3" -> { if(printCancellableTickets(c,customerId)){ System.out.print("Your ticket numbers to cancel (comma-separated): "); booking.cancelTickets(customerId, numbers(in.nextLine())); } }
@@ -81,7 +81,7 @@ public class DbConnector {
                 case "8" -> { System.out.print("Delete this account permanently? (y/N): "); if (in.nextLine().trim().equalsIgnoreCase("y") && new UserOperations(c).deleteUser(customerId)) return; }
                 case "0" -> { return; }
                 default -> System.out.println("Invalid choice.");
-            }
+            } } catch (Exception e) { printError(e); }
         }
     }
 
@@ -90,7 +90,7 @@ public class DbConnector {
         OrganizerToolkit toolkit = new OrganizerToolkit(c);
         while (true) {
             System.out.println("\nOrganizer: 1) Create event 2) Add performance 3) Define tier 4) Assign section/tier 5) Set resale cap 6) Update tier price 7) Block seat 8) Cancel performance 9) Unblock seat 10) Add artist/lineup 11) Pricing suggestions 12) Delete account 0) Logout");
-            switch (in.nextLine().trim()) {
+            try { switch (in.nextLine().trim()) {
                 case "1" -> { printTaxonomies(c); System.out.print("Ticketmaster segment (e.g. Music, Arts & Theatre, Sports): "); String segment=in.nextLine(); System.out.print("Genre: "); String genre=in.nextLine(); System.out.print("Event title: "); String title=in.nextLine(); System.out.print("Description: "); String desc=in.nextLine(); System.out.print("Resale cap multiplier (e.g. 1.20): "); events.createEvent(organizerId,events.createTaxonomy(segment,genre),title,desc,Double.parseDouble(in.nextLine())); }
                 case "2" -> { int e=ownedEvent(c,in,organizerId); int v=venue(c,in); System.out.print("Performance name: "); String n=in.nextLine(); System.out.print("Date/time (YYYY-MM-DDTHH:MM): "); events.addPerformance(e,v,n,LocalDateTime.parse(in.nextLine())); }
                 case "3" -> { int p=ownedPerformance(c,in,organizerId); System.out.print("Tier name: "); String n=in.nextLine(); System.out.print("Price: "); events.definePriceTiers(p,List.of(new EventOperations.Tier(n,new BigDecimal(in.nextLine())))); }
@@ -105,7 +105,7 @@ public class DbConnector {
                 case "12" -> { System.out.print("Delete this account permanently? (y/N): "); if (in.nextLine().trim().equalsIgnoreCase("y") && new UserOperations(c).deleteUser(organizerId)) return; }
                 case "0" -> { return; }
                 default -> System.out.println("Invalid choice.");
-            }
+            } } catch (Exception e) { printError(e); }
         }
     }
 
@@ -117,16 +117,17 @@ public class DbConnector {
             System.out.println("Queries: 1) Q1 Location  2) Q2 Postal  3) Q3 Address  4) Q4 Date/capacity  5) Q5 Filters  6) Q6 Seat map  7) Q7 Best seats");
             System.out.println("Reports: r1) City revenue  r1b) Venue revenue  r2) Taxonomy  r3/r3b/r3c) Organizers  r4) Scalpers  r5) Orders  r6) Cancellations  r7) Sell-through  r8) Resale  r9) Comments  0) Back");
             System.out.print("Choice: "); String x=in.nextLine().trim();
-            switch(x) {
+            try { switch(x) {
                 case "1" -> { System.out.print("Latitude: "); double a=Double.parseDouble(in.nextLine()); System.out.print("Longitude: "); double b=Double.parseDouble(in.nextLine()); System.out.print("Radius km (blank=25): "); String d=in.nextLine(); System.out.print("Rank distance/price: "); String by=in.nextLine(); System.out.print("asc/desc: "); q.searchByLocation(a,b,d.isBlank()?25:Double.parseDouble(d),by,in.nextLine()); }
                 case "2" -> { System.out.print("Postal code: "); q.searchByPostalCode(in.nextLine()); } case "3" -> { System.out.print("Exact address: "); q.searchByAddress(in.nextLine()); }
                 case "4" -> { System.out.print("Start date/time (YYYY-MM-DDTHH:MM): "); LocalDateTime s=LocalDateTime.parse(in.nextLine()); System.out.print("End date/time (YYYY-MM-DDTHH:MM): "); LocalDateTime e=LocalDateTime.parse(in.nextLine()); System.out.print("Minimum available tickets (whole number): "); q.searchWithDateRange(s,e,Integer.parseInt(in.nextLine())); }
                 case "5" -> filter(q,in); case "6" -> q.seatMapSummary(performance(c,in)); case "7" -> { int p=performance(c,in); System.out.print("Quantity: "); int n=Integer.parseInt(in.nextLine()); System.out.print("Budget (blank=none): "); String b=in.nextLine(); q.bestAvailable(p,n,b.isBlank()?null:Double.parseDouble(b)); }
-                case "r1" -> dates(in,(s,e)->r.ticketsAndRevenueByCity(s,e)); case "r1b" -> dates(in,(s,e)->{System.out.print("City: ");r.ticketsAndRevenueByVenue(s,e,in.nextLine());}); case "r2" -> r.eventCountsByTaxonomyAndLocation(); case "r3" -> r.rankOrganizersByRevenueOverall(); case "r3b" -> r.rankOrganizersByRevenuePerCountry(); case "r3c" -> {System.out.print("City: ");r.rankOrganizersByRevenueByCity(in.nextLine());} case "r4" -> r.possibleScalpersByCity(); case "r5" -> dates(in,r::rankCustomersByOrders); case "r6" -> {System.out.print("Year: ");r.mostCancellations(Integer.parseInt(in.nextLine()));} case "r7" -> {System.out.print("Month YYYY-MM-DD: ");String m=in.nextLine();System.out.print("City (blank=all): ");String city=in.nextLine();r.sellThroughReport(LocalDate.parse(m),city.isBlank()?null:city);} case "r8" -> dates(in,r::resaleReport); case "r9" -> r.topNounPhrasesByEvent(); case "0" -> {return;} default -> System.out.println("Invalid choice."); }
+                case "r1" -> dates(in,(s,e)->r.ticketsAndRevenueByCity(s,e)); case "r1b" -> dates(in,(s,e)->{System.out.print("City: ");r.ticketsAndRevenueByVenue(s,e,in.nextLine());}); case "r2" -> r.eventCountsByTaxonomyAndLocation(); case "r3" -> r.rankOrganizersByRevenueOverall(); case "r3b" -> r.rankOrganizersByRevenuePerCountry(); case "r3c" -> {System.out.print("City: ");r.rankOrganizersByRevenueByCity(in.nextLine());} case "r4" -> r.possibleScalpersByCity(); case "r5" -> dates(in,r::rankCustomersByOrders); case "r6" -> {System.out.print("Year: ");r.mostCancellations(Integer.parseInt(in.nextLine()));} case "r7" -> {System.out.print("Month YYYY-MM-DD: ");String m=in.nextLine();System.out.print("City (blank=all): ");String city=in.nextLine();r.sellThroughReport(LocalDate.parse(m),city.isBlank()?null:city);} case "r8" -> dates(in,r::resaleReport); case "r9" -> r.topNounPhrasesByEvent(); case "0" -> {return;} default -> System.out.println("Invalid choice."); } } catch (Exception e) { printError(e); }
         }
     }
 
     @FunctionalInterface private interface DateReport { void run(LocalDate start, LocalDate end); }
+    private static void printError(Exception error) { String message=error.getMessage(); if(error instanceof NumberFormatException || error instanceof java.time.format.DateTimeParseException) System.out.println("Invalid input. Please use the requested number or date format."); else if(error instanceof IllegalArgumentException) System.out.println("Invalid input"+(message==null?".":": "+message)); else if(error instanceof SQLException) System.out.println("Database error. Your request was not completed."); else System.out.println("Unable to complete that request"+(message==null?".":": "+message)); }
     private static void dates(Scanner in, DateReport report) { System.out.print("Start date (YYYY-MM-DD): ");LocalDate s=LocalDate.parse(in.nextLine());System.out.print("End date (YYYY-MM-DD): ");report.run(s,LocalDate.parse(in.nextLine())); }
     private static void filter(SearchQueries q, Scanner in) { SearchQueries.PerformanceFilter f=new SearchQueries.PerformanceFilter();System.out.print("City (text; blank=any): ");f.city=blank(in);System.out.print("Segment (text; blank=any): ");f.segment=blank(in);System.out.print("Genre (text; blank=any): ");f.genre=blank(in);System.out.print("Start (YYYY-MM-DDTHH:MM; blank=any): ");String s=in.nextLine();if(!s.isBlank())f.start=LocalDateTime.parse(s);System.out.print("End (YYYY-MM-DDTHH:MM; blank=any): ");s=in.nextLine();if(!s.isBlank())f.end=LocalDateTime.parse(s);System.out.print("Min price (e.g. 49.99; blank=any): ");s=in.nextLine();if(!s.isBlank())f.minPrice=Double.parseDouble(s);System.out.print("Max price (e.g. 150.00; blank=any): ");s=in.nextLine();if(!s.isBlank())f.maxPrice=Double.parseDouble(s);System.out.print("Min available tickets (whole number; blank=any): ");s=in.nextLine();if(!s.isBlank())f.minAvailable=Integer.parseInt(s);System.out.print("Seating: reserved, GA, or blank for any: ");s=in.nextLine();if(s.equalsIgnoreCase("reserved"))f.reservedSeating=true; if(s.equalsIgnoreCase("ga"))f.reservedSeating=false;q.filteredSearch(f); }
     private static String blank(Scanner in){String s=in.nextLine().trim();return s.isBlank()?null:s;}
