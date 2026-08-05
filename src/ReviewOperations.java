@@ -16,14 +16,14 @@ public class ReviewOperations {
         this.conn = conn;
     }
 
-    public boolean insertReview(int customerId, String eventTitle, String content, int eventRating, int venueRating) {
+    public boolean insertReview(int customerId, int performanceId, String content, int eventRating, int venueRating) {
         if (content == null || content.isBlank() || eventRating < 1 || eventRating > 5 || venueRating < 1 || venueRating > 5) {
             throw new IllegalArgumentException("Comment and ratings from 1 to 5 are required.");
         }
         String attendance = "SELECT p.performanceId FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId " +
-            "JOIN Events e ON e.eventId=p.eventId WHERE t.currentOwnerId=? AND t.status='Active' AND e.title=? AND p.dateTime<NOW() ORDER BY p.dateTime DESC LIMIT 1";
+            "WHERE t.currentOwnerId=? AND t.status='Active' AND p.performanceId=? AND p.dateTime<NOW()";
         try (PreparedStatement find=conn.prepareStatement(attendance)) {
-            find.setInt(1,customerId); find.setString(2,eventTitle.trim());
+            find.setInt(1,customerId); find.setInt(2,performanceId);
             try(ResultSet rs=find.executeQuery()) {
                 if(!rs.next()) return false;
                 try(PreparedStatement insert=conn.prepareStatement("INSERT INTO Comments (customerId,performanceId,content,eventRating,venueRating) VALUES (?,?,?,?,?)")) {
