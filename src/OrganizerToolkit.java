@@ -25,15 +25,28 @@ public class OrganizerToolkit {
         display(sql, venueId, genre);
     }
 
-    // Suggest a price for each tier of a new performance.
+    // Suggest a price for each tier of a new performance. 
+    // Comparability strategy: prefer performances of the same genre in the same city
+    // (closest proxy for local market conditions); if none exist yet,
+    // broaden to the same genre anywhere, so the tool still produces a
+    // usable suggestion rather than silently returning nothing.
     public void suggestTierPrices(int venueId, String genre) {
-        String sql = "SELECT pt.tierName, ROUND(AVG(pt.price),2) suggestedPrice, ROUND(AVG(sa.availableSeatCount),0) averageRemainingCapacity, COUNT(*) comparableSections " +
+        String base = "SELECT pt.tierName, ROUND(AVG(pt.price),2) suggestedPrice, ROUND(AVG(sa.availableSeatCount),0) averageRemainingCapacity, COUNT(*) comparableSections " +
             "FROM Performances p JOIN Events e ON e.eventId=p.eventId JOIN Taxonomy tx ON tx.taxonomyId=e.taxonomyId JOIN Venues v ON v.venueId=p.venueId " +
             "JOIN PriceTiers pt ON pt.performanceId=p.performanceId JOIN SectionAvailability sa ON sa.performanceId=p.performanceId " +
             "JOIN PerformanceSectionAssignments psa ON psa.performanceId=sa.performanceId AND psa.sectionId=sa.sectionId AND psa.tierId=pt.tierId " +
-            "WHERE v.city=(SELECT city FROM Venues WHERE venueId=?) AND tx.genre=? AND p.dateTime<NOW() AND p.status='Scheduled' " +
-            "GROUP BY pt.tierName ORDER BY suggestedPrice";
-        display(sql, venueId, genre);
+            "WHERE tx.genre=? AND p.dateTime<NOW() AND p.status='Scheduled' ";
+        String cityScoped = base + "AND v.city=(SELECT city FROM Venues WHERE venueId=?) GROUP BY pt.tierName ORDER BY suggestedPrice";
+        String genreOnly = base + "GROUP BY pt.tierName ORDER BY suggestedPrice";
+
+        System.out.println("Tier price suggestions (same city + genre, past performances):");
+        if (display(cityScoped, genre, venueId) == 0) {
+            System.out.println("No comparable performances in this city yet -- broadening to same genre, any city:");
+            if (display(genreOnly, genre) == 0) {
+                System.out.println("No comparable historical performances found for genre '" + genre + "'. " +
+                    "Try again once more performances of this genre have taken place, or set prices manually.");
+            }
+        }
     }
 
     // Extra credit: given a proposed price change for a tier, estimate the
@@ -49,10 +62,25 @@ public class OrganizerToolkit {
         display(sql, proposedPrice, proposedPrice, proposedPrice, tierId);
     }
 
-    private void display(String sql, Object... params) {
+    // Returns the number of rows printed, so callers can detect an empty
+    // result (e.g. to fall back to a broader comparability rule) instead of
+    // silently printing nothing.
+    private int display(String sql, Object... params) {
         try (PreparedStatement ps=conn.prepareStatement(sql)) {
             for(int i=0;i<params.length;i++) ps.setObject(i+1,params[i]);
-            try(ResultSet rs=ps.executeQuery()) { ResultSetMetaData m=rs.getMetaData(); while(rs.next()) { for(int i=1;i<=m.getColumnCount();i++) System.out.print(m.getColumnLabel(i)+"="+rs.getObject(i)+(i==m.getColumnCount()?"\n":", ")); } }
-        } catch(SQLException e) { throw new RuntimeException("Pricing recommendation failed.",e); }
+            try(ResultSet rs=ps.executeQuery()) {
+                ResultSetMetaData m=rs.getMetaData(); 
+                int rowCount=0;
+                while(rs.next()) { 
+                    rowCount++; 
+                    for(int i=1;i<=m.getColumnCount();i++) { 
+                        System.out.print(m.getColumnLabel(i)+"="+rs.getObject(i)+(i==m.getColumnCount()?"\n":", ")); 
+                    }
+                }
+                return rowCount;
+            }
+        } catch(SQLException e) { 
+            throw new RuntimeException("Pricing recommendation failed.",e); 
+        }
     }
 }
