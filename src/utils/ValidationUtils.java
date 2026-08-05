@@ -9,6 +9,11 @@ import java.sql.SQLException;
 public final class ValidationUtils {
     private ValidationUtils() { }
 
+    /** Requires a local part, an @ symbol, and a dot-domain suffix such as .com or .ca. */
+    public static boolean isValidEmail(String email) {
+        return email != null && email.matches("^[^\\s@]+@[^\\s@]+\\.[A-Za-z]{2,}$");
+    }
+
     public static boolean customerExists(Connection conn, int customerId) throws SQLException {
         return exists(conn, "SELECT 1 FROM Customers WHERE customerId = ?", customerId);
     }

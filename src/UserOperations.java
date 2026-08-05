@@ -5,6 +5,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDate;
 
+import utils.ValidationUtils;
+
 /**
  * Account management: create/delete users, and promote a user to customer
  * or organizer (see schema.sql Users/Customers/Organizers/PaymentMethods).
@@ -25,11 +27,14 @@ public class UserOperations {
         if (dateOfBirth.isAfter(LocalDate.now().minusYears(18))) {
             throw new IllegalArgumentException("User must be at least 18 years old to open an account.");
         }
+        if (!ValidationUtils.isValidEmail(email)) {
+            throw new IllegalArgumentException("Email must contain @ and end in a domain such as .com or .ca.");
+        }
 
         String sql = "INSERT INTO Users (name, email, address, dateOfBirth, accountType) VALUES (?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, name);
-            ps.setString(2, email);
+            ps.setString(2, email.trim());
             ps.setString(3, address);
             ps.setDate(4, java.sql.Date.valueOf(dateOfBirth));
             ps.setString(5, accountType);
