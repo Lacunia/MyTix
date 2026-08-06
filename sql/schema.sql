@@ -273,6 +273,8 @@ CREATE TABLE ResaleListings (
     status ENUM('Active', 'Sold', 'Withdrawn') NOT NULL DEFAULT 'Active',
     -- Note: The price cap constraint is dynamic relative to the original ticket's face
     -- value and the event's resalePriceCap.
+    -- "A ticket can have at most one Active listing at a time" is enforced by
+    -- trg_one_active_listing_per_ticket below.
 
     CONSTRAINT fk_resalelistings_ticket FOREIGN KEY (ticketId) REFERENCES Tickets(ticketId) ON DELETE CASCADE,
     CONSTRAINT fk_resalelistings_seller FOREIGN KEY (sellerId) REFERENCES Customers(customerId),
@@ -381,6 +383,20 @@ BEGIN
     END IF;
 END$$
 
+-- A ticket can have at most one Active resale listing at a time.
+CREATE TRIGGER trg_one_active_listing_per_ticket
+BEFORE INSERT ON ResaleListings
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Active' AND EXISTS (
+        SELECT 1 FROM ResaleListings rl
+        WHERE rl.ticketId = NEW.ticketId AND rl.status = 'Active'
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'This ticket already has an active resale listing';
+    END IF;
+END$$
+
 -- A ticket must have a seatId if and only if its section is reserved seating.
 CREATE TRIGGER trg_ticket_seat_consistency
 BEFORE INSERT ON Tickets
@@ -388,8 +404,8 @@ FOR EACH ROW
 BEGIN
     DECLARE reservedSeating BOOLEAN;
 
-    SELECT isReservedSeating INTO reservedSeating 
-    FROM Sections 
+    SELECT isReservedSeating INTO reservedSeating
+    FROM Sections
     WHERE sectionId = NEW.sectionId;
 
     IF reservedSeating = TRUE AND NEW.seatId IS NULL THEN
@@ -398,6 +414,65 @@ BEGIN
     ELSEIF reservedSeating = FALSE AND NEW.seatId IS NOT NULL THEN
         SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'A general-admission ticket must not specify a seat';
+    END IF;
+END$$
+
+-- a ticket's section must actually be assigned a tier for
+-- that specific performance (mirrors the app-level booking checks).
+CREATE TRIGGER trg_ticket_section_assigned
+BEFORE INSERT ON Tickets
+FOR EACH ROW
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM PerformanceSectionAssignments psa
+        WHERE psa.performanceId = NEW.performanceId AND psa.sectionId = NEW.sectionId
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Section has no price tier assigned for this performance';
+    END IF;
+END$$
+
+-- general-admission sales must never exceed the section's
+-- standing capacity for a performance, even if the application-level lock
+-- (see BookingOperations.bookGeneralAdmission) is bypassed.
+CREATE TRIGGER trg_ga_capacity_check
+BEFORE INSERT ON Tickets
+FOR EACH ROW
+BEGIN
+    DECLARE reservedSeating BOOLEAN;
+    DECLARE cap INT;
+    DECLARE soldCount INT;
+
+    IF NEW.status = 'Active' THEN
+        SELECT isReservedSeating, standingCapacity INTO reservedSeating, cap
+        FROM Sections WHERE sectionId = NEW.sectionId;
+
+        IF reservedSeating = FALSE THEN
+            SELECT COUNT(*) INTO soldCount
+            FROM Tickets
+            WHERE performanceId = NEW.performanceId
+              AND sectionId = NEW.sectionId
+              AND status = 'Active';
+
+            IF soldCount >= cap THEN
+                SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'General admission capacity exceeded for this section and performance';
+            END IF;
+        END IF;
+    END IF;
+END$$
+
+-- A saved payment method must belong to the customer placing the order.
+CREATE TRIGGER trg_order_payment_owner
+BEFORE INSERT ON Orders
+FOR EACH ROW
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM PaymentMethods pm
+        WHERE pm.paymentId = NEW.paymentId AND pm.customerId = NEW.customerId
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Payment method does not belong to this customer';
     END IF;
 END$$
 

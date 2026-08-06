@@ -17,6 +17,7 @@
 # Package Files #
 *.jar
 !mysql-connector-java-8.0.29.jar
+!opennlp-tools-2.3.3.jar
 *.war
 *.nar
 *.ear

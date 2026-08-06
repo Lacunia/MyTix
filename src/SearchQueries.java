@@ -65,13 +65,13 @@ public class SearchQueries {
 
             try (ResultSet rs = ps.executeQuery()) {
                 System.out.printf(
-                    "%-6s %-30s %-25s %-25s %10s %10s%n", 
+                    "%-6s %-30s %-32s %-25s %10s %10s%n",
                     "ID", "Performance", "Venue", "Date/Time", "Dist(km)", "From $"
                 );
-                System.out.println("-".repeat(115));
+                System.out.println("-".repeat(118));
 
                 while (rs.next()) {
-                    System.out.printf("%-6d %-30s %-25s %-25s %10.2f %10.2f%n",
+                    System.out.printf("%-6d %-30s %-32s %-25s %10.2f %10.2f%n",
                         rs.getInt("performanceId"),
                         rs.getString("performanceName"),
                         rs.getString("venueName"),
@@ -104,11 +104,41 @@ public class SearchQueries {
     }
 
     // Q4: temporal refinement of Q1/Q2/Q3 — add a date range + minimum
-    // available ticket count filter.
+    // available ticket count filter. Plain form (no location refinement).
     public void searchWithDateRange(LocalDateTime start, LocalDateTime end, int minAvailable) {
         PerformanceFilter filter = new PerformanceFilter();
         filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
         filteredSearch(filter);
+    }
+
+    // Q4 chained onto Q1: same distance search, refined by date range + min available.
+    public void searchByLocationWithDateRange(double lat, double lon, double radiusKm,
+                                               LocalDateTime start, LocalDateTime end, int minAvailable) {
+        PerformanceFilter filter = new PerformanceFilter();
+        filter.lat = lat; filter.lon = lon; filter.radiusKm = radiusKm;
+        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        runFiltered("", List.of(), filter);
+    }
+
+    // Q4 chained onto Q2: same postal-code (+adjacent) search, refined by date range + min available.
+    public void searchByPostalCodeWithDateRange(String postalCode, LocalDateTime start, LocalDateTime end, int minAvailable) {
+        String normalized = postalCode.replaceAll("\\s+", "").toUpperCase();
+        if (normalized.isBlank()) throw new IllegalArgumentException("Postal code is required.");
+        String prefix = normalized.substring(0, Math.min(3, normalized.length()));
+        String extra = " AND (REPLACE(UPPER(v.postalCode), ' ', '') = ? OR EXISTS (" +
+            "SELECT 1 FROM PostalCodeAdjacency pa WHERE pa.postalPrefix = ? " +
+            "AND pa.adjacentPrefix = LEFT(REPLACE(UPPER(v.postalCode), ' ', ''), 3)))";
+        PerformanceFilter filter = new PerformanceFilter();
+        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        runFiltered(extra, List.of(normalized, prefix), filter);
+    }
+
+    // Q4 chained onto Q3: same exact-address search, refined by date range + min available.
+    public void searchByAddressWithDateRange(String address, LocalDateTime start, LocalDateTime end, int minAvailable) {
+        if (address == null || address.isBlank()) throw new IllegalArgumentException("Address is required.");
+        PerformanceFilter filter = new PerformanceFilter();
+        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        runFiltered(" AND v.address = ?", List.of(address.trim()), filter);
     }
 
     // Q5: general filtered search — city, segment/genre, date range, price
@@ -126,6 +156,7 @@ public class SearchQueries {
         public Double minPrice, maxPrice;
         public Integer minAvailable;
         public Boolean reservedSeating;
+        public Double lat, lon, radiusKm;
     }
 
     private void runFiltered(String extraWhere, List<Object> extraParameters, PerformanceFilter f) {
@@ -135,7 +166,9 @@ public class SearchQueries {
             "FROM Performances p JOIN Events e ON e.eventId=p.eventId JOIN Taxonomy tx ON tx.taxonomyId=e.taxonomyId " +
             "JOIN Venues v ON v.venueId=p.venueId JOIN SectionAvailability sa ON sa.performanceId=p.performanceId " +
             "JOIN PerformanceSectionAssignments psa ON psa.performanceId=sa.performanceId AND psa.sectionId=sa.sectionId " +
+            "JOIN Sections sec ON sec.sectionId=sa.sectionId " +
             "JOIN PriceTiers pt ON pt.tierId=psa.tierId WHERE p.status='Scheduled' AND p.dateTime > NOW()");
+
         List<Object> params = new ArrayList<>(extraParameters);
         sql.append(extraWhere);
         if (f.segment != null) { sql.append(" AND tx.segment = ?"); params.add(f.segment); }
@@ -143,17 +176,26 @@ public class SearchQueries {
         if (f.city != null) { sql.append(" AND v.city = ?"); params.add(f.city); }
         if (f.start != null) { sql.append(" AND p.dateTime >= ?"); params.add(f.start); }
         if (f.end != null) { sql.append(" AND p.dateTime < ?"); params.add(f.end); }
-        if (f.reservedSeating != null) { sql.append(" AND EXISTS (SELECT 1 FROM Sections s WHERE s.venueId=v.venueId AND s.isReservedSeating=?)"); params.add(f.reservedSeating); }
+        // Filters on the specific section contributing to this row (not just
+        // "does the venue have one somewhere"), so price/availability
+        // aggregates only reflect matching sections.
+        if (f.reservedSeating != null) { sql.append(" AND sec.isReservedSeating = ?"); params.add(f.reservedSeating); }
+        if (f.lat != null && f.lon != null) {
+            sql.append(" AND ST_Distance_Sphere(POINT(v.longitude, v.latitude), POINT(?, ?)) / 1000 <= ?");
+            params.add(f.lon); params.add(f.lat); params.add(f.radiusKm != null ? f.radiusKm : DEFAULT_RADIUS_KM);
+        }
         sql.append(" GROUP BY p.performanceId, p.name, e.title, v.name, v.city, p.dateTime");
         if (f.minAvailable != null) { sql.append(" HAVING SUM(sa.availableSeatCount) >= ?"); params.add(f.minAvailable); }
         if (f.minPrice != null) { sql.append(f.minAvailable == null ? " HAVING" : " AND").append(" MIN(pt.price) >= ?"); params.add(f.minPrice); }
         if (f.maxPrice != null) { sql.append((f.minAvailable == null && f.minPrice == null) ? " HAVING" : " AND").append(" MIN(pt.price) <= ?"); params.add(f.maxPrice); }
         sql.append(" ORDER BY p.dateTime, cheapestPrice");
+
         try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
             for (int i=0;i<params.size();i++) ps.setObject(i+1, params.get(i));
             try (ResultSet rs=ps.executeQuery()) {
-                System.out.printf("%-5s %-28s %-20s %-18s %-20s %10s %10s%n", "ID", "Performance", "Venue", "City", "Date", "From $", "Available");
-                while(rs.next()) System.out.printf("%-5d %-28s %-20s %-18s %-20s %10.2f %10d%n", rs.getInt(1),rs.getString(2),rs.getString(4),rs.getString(5),rs.getTimestamp(6),rs.getDouble(7),rs.getInt(8));
+                System.out.printf("%-5s %-28s %-32s %-18s %-25s %10s %10s%n", "ID", "Performance", "Venue", "City", "Date", "From $", "Available");
+                System.out.println("-".repeat(134));
+                while(rs.next()) System.out.printf("%-5d %-28s %-32s %-18s %-25s %10.2f %10d%n", rs.getInt(1),rs.getString(2),rs.getString(4),rs.getString(5),rs.getTimestamp(6),rs.getDouble(7),rs.getInt(8));
             }
         } catch(SQLException e) { throw new RuntimeException("Search failed.", e); }
     }
@@ -198,13 +240,13 @@ public class SearchQueries {
 
             try (ResultSet rs = ps.executeQuery()) {
                 System.out.printf(
-                    "%-15s %-10s %-10s %-18s %10s %10s %10s%n", 
+                    "%-20s %-20s %-10s %-18s %10s %10s %10s%n",
                     "Section", "Tier", "Price $", "Reserved Seating", "Available", "Sold", "Blocked"
                 );
-                System.out.println("-".repeat(91));
+                System.out.println("-".repeat(104));
 
                 while (rs.next()) {
-                    System.out.printf("%-15s %-10s %-10.2f %-18s %10d %10d %10d%n",
+                    System.out.printf("%-20s %-20s %-10.2f %-18s %10d %10d %10d%n",
                         rs.getString("sectionName"),
                         rs.getString("tierName"),
                         rs.getDouble("price"),
@@ -286,13 +328,13 @@ public class SearchQueries {
                 seatsPs.setInt(3, startSeatNumber + quantity - 1);
 
                 try (ResultSet rs = seatsPs.executeQuery()) {
-                    System.out.printf("%-8s %-8s %-15s %-15s %10s%n",
+                    System.out.printf("%-8s %-8s %-15s %-20s %10s%n",
                         "SeatId", "Seat#", "Row", "Section", "Price");
-                    System.out.println("-".repeat(60));
+                    System.out.println("-".repeat(65));
 
                     // Print out the consecutive seats (1 per row)
                     while (rs.next()) {
-                        System.out.printf("%-8d %-8d %-15s %-15s %10.2f%n",
+                        System.out.printf("%-8d %-8d %-15s %-20s %10.2f%n",
                             rs.getInt("seatId"),
                             rs.getInt("seatNumber"),
                             rs.getString("rowName"),

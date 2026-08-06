@@ -1,3 +1,6 @@
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
@@ -15,11 +18,20 @@ import java.util.Set;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
+import opennlp.tools.chunker.ChunkerME;
+import opennlp.tools.chunker.ChunkerModel;
+import opennlp.tools.postag.POSModel;
+import opennlp.tools.postag.POSTaggerME;
+import opennlp.tools.tokenize.TokenizerME;
+import opennlp.tools.tokenize.TokenizerModel;
+import opennlp.tools.util.Span;
+
 /**
  * R1-R9 analytics reports. All must be implemented in SQL and invoked from
- * Java (per project rules), except R9's noun-phrase extraction which may use
- * a Java text-processing library on top of the raw Comments.content pulled
- * back from SQL.
+ * Java (per project rules), except R9's noun-phrase extraction, which uses
+ * Apache OpenNLP (tokenizer + POS tagger + chunker) on top of the raw
+ * Comments.content pulled back from SQL, per the assignment's one allowed
+ * exception to "everything in SQL".
  */
 public class Reports {
 
@@ -27,22 +39,38 @@ public class Reports {
 
     // Fields for R9
     private static final int TOP_PHRASE_COUNT = 10;
-    // Common English function words to strip out before extracting phrase
-    // candidates.
-    private static final Set<String> STOPWORDS = new java.util.HashSet<>(Arrays.asList(
-        "a", "an", "the", "and", "or", "but", "so", "if", "of", "in", "on", "at",
-        "to", "for", "with", "from", "by", "as", "about", "into", "over", "after",
-        "before", "between", "through", "during", "this", "that", "these", "those",
-        "it", "its", "it's", "i", "we", "you", "he", "she", "they", "them", "his",
-        "her", "their", "our", "your", "my", "me", "us", "is", "was", "were", "are",
-        "be", "been", "being", "am", "will", "would", "could", "should", "can",
-        "do", "does", "did", "have", "has", "had", "not", "no", "very", "really",
-        "just", "there", "here", "up", "down", "out", "all", "some", "one", "also",
-        "too", "then", "than", "what", "who", "which", "when", "where", "how"
-    ));
+    private static final String MODELS_DIR = "models";
+
+    // OpenNLP models are large (MB-scale) and stateless once loaded, so they
+    // are loaded once per JVM rather than per Reports instance/report call.
+    private static TokenizerME tokenizer;
+    private static POSTaggerME posTagger;
+    private static ChunkerME chunker;
 
     public Reports(Connection conn) {
         this.conn = conn;
+    }
+
+    private static synchronized void ensureNlpModelsLoaded() {
+        if (tokenizer != null) return;
+        try {
+            tokenizer = new TokenizerME(loadModel(TokenizerModel.class, "en-token.bin"));
+            posTagger = new POSTaggerME(loadModel(POSModel.class, "en-pos-maxent.bin"));
+            chunker = new ChunkerME(loadModel(ChunkerModel.class, "en-chunker.bin"));
+        } catch (IOException e) {
+            throw new RuntimeException(
+                "Unable to load OpenNLP models from '" + MODELS_DIR + "/'. " +
+                "R9 requires en-token.bin, en-pos-maxent.bin and en-chunker.bin in that directory.", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <M> M loadModel(Class<M> modelClass, String fileName) throws IOException {
+        try (InputStream in = new FileInputStream(MODELS_DIR + "/" + fileName)) {
+            return modelClass.getConstructor(InputStream.class).newInstance(in);
+        } catch (ReflectiveOperationException e) {
+            throw new IOException("Failed to construct " + modelClass.getSimpleName(), e);
+        }
     }
 
     /**
@@ -101,11 +129,11 @@ public class Reports {
             ps.setString(3, city);
 
             try (ResultSet rs = ps.executeQuery()) {
-                System.out.printf("%-10s %-25s %12s %15s%n", "Venue Id", "Venue", "Tickets Sold", "Gross Revenue");
-                System.out.println("-".repeat(67));
+                System.out.printf("%-10s %-32s %12s %15s%n", "Venue Id", "Venue", "Tickets Sold", "Gross Revenue");
+                System.out.println("-".repeat(72));
 
                 while (rs.next()) {
-                    System.out.printf("%-10d %-25s %12d %15.2f%n",
+                    System.out.printf("%-10d %-32s %12d %15.2f%n",
                         rs.getInt("venueId"),
                         rs.getString("venueName"),
                         rs.getInt("ticketsSold"),
@@ -159,7 +187,7 @@ public class Reports {
         try (Statement stmt = conn.createStatement()) {
             System.out.println("=== Event & Performance Count per Segment/Genre ===");
             System.out.printf("%-20s %-20s %10s %15s%n", "Segment", "Genre", "Events", "Performances");
-            System.out.println("-".repeat(65));
+            System.out.println("-".repeat(68));
             try (ResultSet rs = stmt.executeQuery(bySegmentGenre)) {
                 while (rs.next()) {
                     System.out.printf("%-20s %-20s %10d %15d%n",
@@ -172,7 +200,7 @@ public class Reports {
 
             System.out.println("\n=== Event & Performance Count per Country ===");
             System.out.printf("%-20s %10s %15s%n", "Country", "Events", "Performances");
-            System.out.println("-".repeat(45));
+            System.out.println("-".repeat(47));
             try (ResultSet rs = stmt.executeQuery(byCountry)) {
                 while (rs.next()) {
                     System.out.printf("%-20s %10d %15d%n",
@@ -184,7 +212,7 @@ public class Reports {
 
             System.out.println("\n=== Event & Performance Count per Country + City ===");
             System.out.printf("%-20s %-20s %10s %15s%n", "Country", "City", "Events", "Performances");
-            System.out.println("-".repeat(65));
+            System.out.println("-".repeat(68));
             try (ResultSet rs = stmt.executeQuery(byCountryCity)) {
                 while (rs.next()) {
                     System.out.printf("%-20s %-20s %10d %15d%n",
@@ -196,11 +224,11 @@ public class Reports {
             }
 
             System.out.println("\n=== Event & Performance Count per Country + City + Venue ===");
-            System.out.printf("%-20s %-20s %-25s %10s %15s%n", "Country", "City", "VenueName", "Events", "Performances");
-            System.out.println("-".repeat(90));
+            System.out.printf("%-20s %-20s %-32s %10s %15s%n", "Country", "City", "VenueName", "Events", "Performances");
+            System.out.println("-".repeat(101));
             try (ResultSet rs = stmt.executeQuery(byCountryCityVenue)) {
                 while (rs.next()) {
-                    System.out.printf("%-20s %-20s %-25s %10d %15d%n",
+                    System.out.printf("%-20s %-20s %-32s %10d %15d%n",
                         rs.getString("country"),
                         rs.getString("city"),
                         rs.getString("venueName"),
@@ -315,16 +343,30 @@ public class Reports {
         }
     }
 
-    // R4: per city, customers who — in the past year — listed for resale more
-    // than half of the tickets they purchased, having purchased >= 10 (scalper flag).
+    // R4: per city, customers who purchased >= 10 tickets (all-time, per the
+    // spec's "provided they purchased at least ten") and who, within the past
+    // year, LISTED (not necessarily sold) more than half of those tickets for
+    // resale. "Listed" means any ResaleListings row (Active, Sold, or
+    // Withdrawn all count as having been listed), scoped to postedDate, not
+    // to when the ticket was originally purchased.
     public void possibleScalpersByCity() {
-        String sql = "SELECT v.city, c.customerId, u.name, COUNT(DISTINCT t.ticketId) purchased, " +
-            "COUNT(DISTINCT h.ticketId) resold, COUNT(DISTINCT h.ticketId)/COUNT(DISTINCT t.ticketId)*100 resalePct " +
-            "FROM Orders o JOIN Tickets t ON t.orderId=o.orderId JOIN Customers c ON c.customerId=o.customerId " +
-            "JOIN Users u ON u.userId=c.customerId JOIN Performances p ON p.performanceId=o.performanceId JOIN Venues v ON v.venueId=p.venueId " +
-            "LEFT JOIN TicketOwnershipHistory h ON h.ticketId=t.ticketId AND h.sellerId=c.customerId AND h.transactionDate >= DATE_SUB(NOW(), INTERVAL 1 YEAR) " +
-            "WHERE o.purchaseTime >= DATE_SUB(NOW(), INTERVAL 1 YEAR) GROUP BY v.city,c.customerId,u.name " +
-            "HAVING COUNT(DISTINCT t.ticketId)>=10 AND COUNT(DISTINCT h.ticketId)>COUNT(DISTINCT t.ticketId)/2 ORDER BY v.city,resalePct DESC";
+        String sql =
+            "SELECT v.city, c.customerId, u.name, " +
+            "       COUNT(DISTINCT t.ticketId) purchased, " +
+            "       COUNT(DISTINCT rl.ticketId) listedForResale, " +
+            "       COUNT(DISTINCT rl.ticketId)/COUNT(DISTINCT t.ticketId)*100 resalePct " +
+            "FROM Orders o " +
+            "JOIN Tickets t ON t.orderId=o.orderId " +
+            "JOIN Customers c ON c.customerId=o.customerId " +
+            "JOIN Users u ON u.userId=c.customerId " +
+            "JOIN Performances p ON p.performanceId=o.performanceId " +
+            "JOIN Venues v ON v.venueId=p.venueId " +
+            "LEFT JOIN ResaleListings rl ON rl.ticketId=t.ticketId AND rl.sellerId=c.customerId " +
+            "  AND rl.postedDate >= DATE_SUB(NOW(), INTERVAL 1 YEAR) " +
+            "GROUP BY v.city, c.customerId, u.name " +
+            "HAVING COUNT(DISTINCT t.ticketId) >= 10 " +
+            "  AND COUNT(DISTINCT rl.ticketId) > COUNT(DISTINCT t.ticketId)/2 " +
+            "ORDER BY v.city, resalePct DESC";
         printQuery(sql);
     }
 
@@ -435,10 +477,9 @@ public class Reports {
         }
     }
 
-    // R7: sell-through rate per performance and per price tier (blocked seats
-    // excluded from sellable capacity, GA capacity counts). Also: for a given
-    // month, by city, performances that sold out vs sold < 25%.
-    public void sellThroughReport(LocalDate month, String city) {
+    // R7: sell-through rate per price tier of a performance (blocked seats
+    // excluded from sellable capacity, GA capacity counts).
+    public void sellThroughByTier(LocalDate month, String city) {
         String sql = "SELECT p.performanceId,p.name,v.city,pt.tierName, " +
             "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable,COALESCE(SUM(sold.soldCount),0) sold, " +
             "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
@@ -447,8 +488,48 @@ public class Reports {
             "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
             "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
             "GROUP BY p.performanceId,p.name,v.city,pt.tierName ORDER BY p.performanceId,pt.tierName";
+        System.out.println("=== R7: Sell-through rate by price tier ===");
         if (city == null) printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
         else printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+    }
+
+    // R7: sell-through rate per performance, summed across all of its tiers/sections.
+    public void sellThroughByPerformance(LocalDate month, String city) {
+        String sql = "SELECT p.performanceId,p.name,v.city, " +
+            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable,COALESCE(SUM(sold.soldCount),0) sold, " +
+            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+            "JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
+            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+            "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
+            "GROUP BY p.performanceId,p.name,v.city ORDER BY p.performanceId";
+        System.out.println("\n=== R7: Sell-through rate by performance ===");
+        if (city == null) printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        else printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+    }
+
+    // R7: for a given month, by city, performances that sold out (100%) and
+    // performances that sold less than a quarter of their sellable capacity.
+    public void sellThroughExtremesByCityForMonth(LocalDate month) {
+        String base =
+            "SELECT p.performanceId,p.name,v.city, " +
+            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
+            "COALESCE(SUM(sold.soldCount),0) sold, " +
+            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 " +
+            "     ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+            "JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
+            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+            "WHERE p.dateTime >= ? AND p.dateTime < ? " +
+            "GROUP BY p.performanceId,p.name,v.city ";
+
+        System.out.println("\n=== R7: Sold-out performances in " + month.getMonth() + " " + month.getYear() + ", by city ===");
+        printQuery("SELECT city, performanceId, name, sellable, sold FROM (" + base + ") x WHERE sellThrough >= 1 ORDER BY city, performanceId",
+            month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+
+        System.out.println("\n=== R7: Performances that sold < 25% of capacity in " + month.getMonth() + " " + month.getYear() + ", by city ===");
+        printQuery("SELECT city, performanceId, name, sellable, sold, sellThrough FROM (" + base + ") x WHERE sellThrough < 0.25 ORDER BY city, performanceId",
+            month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
     }
 
     // R8: per event — completed resales count, avg markup over face value,
@@ -494,7 +575,9 @@ public class Reports {
      * R9
      */
     public void topNounPhrasesByEvent() {
-        String query = 
+        ensureNlpModelsLoaded();
+
+        String query =
             "SELECT e.eventId, e.title, c.content " +
             "FROM Comments c " +
             "JOIN Performances p ON p.performanceId = c.performanceId " +
@@ -526,7 +609,7 @@ public class Reports {
 
             // Count frequencies for each candidate phrases
             Map<String, Integer> frequencies = new HashMap<>();
-            for (String phrase : extractPhraseCandidates(allComments)) {
+            for (String phrase : extractNounPhrases(allComments)) {
                 // First time seeing the phrase --> inserts { "some phrase" : 1 }
                 // Phrase exist in map --> look up current count, adds 1 to it, and
                 //                         update map to { "some phrase" : <new count> }
@@ -543,72 +626,61 @@ public class Reports {
 
             // Display top phrases for this event
             System.out.println("\n=== Event #" + eventId + " - " + title + " ===");
-            System.out.printf("%-30s %10s%n", "Phrase", "Count");
-            System.out.println("-".repeat(42));
+            System.out.printf("%-35s %10s%n", "Phrase", "Count");
+            System.out.println("-".repeat(46));
             for (Map.Entry<String, Integer> phraseEntry : topPhrases) {
-                System.out.printf("%-30s %10d%n", phraseEntry.getKey(), phraseEntry.getValue());
+                System.out.printf("%-35s %10d%n", phraseEntry.getKey(), phraseEntry.getValue());
             }
         }
     }
 
+    // A handful of pronouns/determiners that OpenNLP's chunker sometimes tags
+    // as their own one-word NP (e.g. "it", "this") but that aren't meaningful
+    // as word-cloud phrases.
+    private static final Set<String> NP_STOPWORDS = new java.util.HashSet<>(Arrays.asList(
+        "it", "its", "i", "we", "you", "he", "she", "they", "them", "this", "that",
+        "these", "those", "one", "someone", "something", "everyone", "everything"
+    ));
+
     /**
-     * Extracts noun-phrase candidates from a block of comment text: splits on
-     * sentence punctuation first (so phrases never span two sentences), then
-     * within each sentence, groups consecutive non-stopword words together and
-     * treats each such run as possible phrase material.
+     * Extracts genuine noun phrases from a block of comment text using
+     * OpenNLP: split into sentences, tokenize, POS-tag, then run the chunker
+     * to identify NP (noun phrase) chunks. Only the chunker's NP spans are
+     * used as candidates.
      */
-    private static List<String> extractPhraseCandidates(String text) {
+    private static List<String> extractNounPhrases(String text) {
         List<String> candidates = new ArrayList<>();
 
-        // Split on common sentence punctuations
-        String[] sentences = text.toLowerCase().split("[.,!?;:]+");
+        // Simple sentence split
+        // -- phrases must not span across sentence boundaries.
+        String[] sentences = text.split("(?<=[.!?])\\s+");
 
         for (String sentence : sentences) {
-            // Strip remaining punctuation and split into individual words
-            String[] tokens = sentence.split("[^a-zA-Z']+");
-            List<String> run = new ArrayList<>();
+            if (sentence.isBlank()) continue;
 
-            for (String token : tokens) {
-                if (token.isEmpty()) continue;
+            String[] tokens = tokenizer.tokenize(sentence);
+            if (tokens.length == 0) continue;
+            String[] tags = posTagger.tag(tokens);
+            Span[] chunks = chunker.chunkAsSpans(tokens, tags);
 
-                if (STOPWORDS.contains(token)) {
-                    // When hitting a stopword, we end the current run of content
-                    // words and flush (add) what we've accumulated so far as candidates
-                    flushRun(run, candidates);
-                    run.clear();
-                } else {
-                    // If not a stopword - keep accumulating into current run
-                    run.add(token);
+            for (Span chunk : chunks) {
+                if (!"NP".equals(chunk.getType())) continue;
+
+                StringBuilder phrase = new StringBuilder();
+                boolean hasNoun = false;
+                for (int i = chunk.getStart(); i < chunk.getEnd(); i++) {
+                    if (tags[i].startsWith("NN")) hasNoun = true;
+                    if (phrase.length() > 0) phrase.append(' ');
+                    phrase.append(tokens[i].toLowerCase());
                 }
-            }
 
-            // Sentence ended - flush 
-            flushRun(run, candidates);
+                String phraseText = phrase.toString().replaceAll("[^a-z0-9' ]", "").trim();
+                if (phraseText.isEmpty() || !hasNoun) continue;
+                if (NP_STOPWORDS.contains(phraseText)) continue;
+
+                candidates.add(phraseText);
+            }
         }
         return candidates;
-    }
-
-    /**
-     * Turns one run of consecutive non-stopword words into phrase candidates:
-     * the run itself (capped at 4 words), every 2-word sub-phrase within it,
-     * and each individual word -- so both short common phrases and single
-     * frequent nouns can appear in frequent count.
-     */
-    private static void flushRun(List<String> run, List<String> candidates) {
-        if (run.isEmpty()) return;
-
-        // Add the whole run as one phrase, capped at 4 words to avoid long/unhelpful phrases
-        if (run.size() > 2) {
-            int len = Math.min(run.size(), 4);
-            candidates.add(String.join(" ", run.subList(0, len)));
-        }
-
-        // Add every adjacent pair within the run (e.g. "sound quality")
-        for (int i = 0; i + 1 < run.size(); i++) {
-            candidates.add(run.get(i) + " " + run.get(i + 1));
-        }
-
-        // Add every individual words
-        candidates.addAll(run);
     }
 }

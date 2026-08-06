@@ -16,13 +16,16 @@ public class ResaleOperations {
         this.conn = conn;
     }
 
-    // Insert into ResaleListings. Ticket must be owned by this customer and Active.
+    // Insert into ResaleListings. Ticket must be owned by this customer, Active,
+    // and for a performance that hasn't happened yet (and hasn't been cancelled).
     public boolean listTicketForResale(int ticketId, int sellerId, double askingPrice) {
         if (askingPrice < 0) throw new IllegalArgumentException("Resale price cannot be negative.");
         String sql =
             "INSERT INTO ResaleListings (ticketId, sellerId, resalePrice) " +
             "SELECT t.ticketId, ?, ? FROM Tickets t " +
+            "JOIN Performances p ON p.performanceId = t.performanceId " +
             "WHERE t.ticketId = ? AND t.currentOwnerId = ? AND t.status = 'Active' " +
+            "AND p.status = 'Scheduled' AND p.dateTime > NOW() " +
             "AND NOT EXISTS (SELECT 1 FROM ResaleListings rl WHERE rl.ticketId = t.ticketId AND rl.status = 'Active')";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, sellerId); ps.setDouble(2, askingPrice); ps.setInt(3, ticketId); ps.setInt(4, sellerId);
@@ -51,7 +54,11 @@ public class ResaleOperations {
             }
             int ticketId, sellerId;
             try (PreparedStatement ps = conn.prepareStatement(
-                    "SELECT ticketId, sellerId FROM ResaleListings WHERE listingId = ? AND status = 'Active' FOR UPDATE")) {
+                    "SELECT rl.ticketId, rl.sellerId FROM ResaleListings rl " +
+                    "JOIN Tickets t ON t.ticketId = rl.ticketId " +
+                    "JOIN Performances p ON p.performanceId = t.performanceId " +
+                    "WHERE rl.listingId = ? AND rl.status = 'Active' " +
+                    "AND p.status = 'Scheduled' AND p.dateTime > NOW() FOR UPDATE")) {
                 ps.setInt(1, listingId);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) { conn.rollback(); return false; }

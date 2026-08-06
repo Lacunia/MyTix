@@ -271,9 +271,12 @@ public class EventOperations {
 
         String sql =
             "UPDATE PriceTiers pt " +
+            "JOIN Performances p ON p.performanceId = pt.performanceId " +
             "SET pt.price = ? " +
             "WHERE pt.tierId = ? " +
             "  AND pt.performanceId = ? " +
+            "  AND p.status = 'Scheduled' " +
+            "  AND p.dateTime > NOW() " +
             "  AND NOT EXISTS ( " +
             "      SELECT 1 " +
             "      FROM Tickets t " +
@@ -299,29 +302,40 @@ public class EventOperations {
     }
 
     // Insert into BlockedSeats. Must first confirm the seat isn't already sold
-    // for this performance (organizer cannot block a sold seat).
+    // for this performance (organizer cannot block a sold seat). Runs inside a
+    // transaction with a row lock on the seat's active tickets so a concurrent
+    // booking can't sell the seat between the check and the insert.
     public boolean blockSeat(int performanceId, int seatId) {
-        String checkSql = "SELECT COUNT(*) FROM Tickets WHERE performanceId = ? AND seatId = ?";
+        String checkSql =
+            "SELECT COUNT(*) FROM Tickets " +
+            "WHERE performanceId = ? AND seatId = ? AND status = 'Active' FOR UPDATE";
         String insertSql = "INSERT INTO BlockedSeats (performanceId, seatId) VALUES (?, ?)";
 
-        try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
-            checkStmt.setInt(1, performanceId);
-            checkStmt.setInt(2, seatId);
-            ResultSet rs = checkStmt.executeQuery();
-            if (rs.next() && rs.getInt(1) > 0) {
-                return false; // Seat is already sold
+        try {
+            conn.setAutoCommit(false);
+            try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+                checkStmt.setInt(1, performanceId);
+                checkStmt.setInt(2, seatId);
+                try (ResultSet rs = checkStmt.executeQuery()) {
+                    if (rs.next() && rs.getInt(1) > 0) {
+                        conn.rollback();
+                        return false; // Seat is currently sold
+                    }
+                }
             }
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to check if seat is sold.", e);
-        }
 
-        try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
-            insertStmt.setInt(1, performanceId);
-            insertStmt.setInt(2, seatId);
-            insertStmt.executeUpdate();
+            try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
+                insertStmt.setInt(1, performanceId);
+                insertStmt.setInt(2, seatId);
+                insertStmt.executeUpdate();
+            }
+            conn.commit();
             return true; // Seat successfully blocked
         } catch (SQLException e) {
+            try { conn.rollback(); } catch (SQLException ignored) { }
             throw new RuntimeException("Failed to block seat.", e);
+        } finally {
+            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
         }
     }
 

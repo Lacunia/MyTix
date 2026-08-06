@@ -33,4 +33,8 @@ DROP TRIGGER IF EXISTS trg_users_minimum_age_insert;
 DROP TRIGGER IF EXISTS trg_users_minimum_age_update;
 DROP TRIGGER IF EXISTS trg_section_venue_match;
 DROP TRIGGER IF EXISTS trg_resale_price_cap;
+DROP TRIGGER IF EXISTS trg_one_active_listing_per_ticket;
 DROP TRIGGER IF EXISTS trg_ticket_seat_consistency;
+DROP TRIGGER IF EXISTS trg_ticket_section_assigned;
+DROP TRIGGER IF EXISTS trg_ga_capacity_check;
+DROP TRIGGER IF EXISTS trg_order_payment_owner;
