@@ -27,6 +27,16 @@ BEGIN
     DECLARE customer INT;
     DECLARE ticket INT;
     DECLARE selected_ticket INT;
+    DECLARE sec3 INT;
+    DECLARE sec1Cap INT;
+    DECLARE sec2Cap INT;
+    DECLARE gaCap INT;
+    DECLARE totalCap INT;
+    DECLARE sec1Price DECIMAL(10,2);
+    DECLARE sec2Price DECIMAL(10,2);
+    DECLARE gaPrice DECIMAL(10,2);
+    DECLARE ownedCount INT;
+    DECLARE listCount INT;
 
     -- Five organizers and 100 adult customers with fictional payment data.
     INSERT INTO Users (name, email, address, dateOfBirth, accountType) VALUES
@@ -129,7 +139,8 @@ BEGIN
       INSERT INTO Performances (eventId, venueId, name, dateTime, status, cancelledAt)
       VALUES (
         CASE WHEN perf <= 8 THEN 1 WHEN perf BETWEEN 9 AND 18 THEN 2 ELSE 1 + MOD(perf - 1, 20) END,
-        CASE WHEN perf <= 8 THEN perf WHEN perf BETWEEN 9 AND 18 THEN 2 ELSE 1 + MOD(perf - 1, 8) END,
+        CASE WHEN perf <= 8 THEN CASE perf WHEN 1 THEN 1 WHEN 2 THEN 4 WHEN 3 THEN 6 WHEN 4 THEN 2 WHEN 5 THEN 3 WHEN 6 THEN 5 WHEN 7 THEN 7 ELSE 8 END
+             WHEN perf BETWEEN 9 AND 18 THEN 2 ELSE 1 + MOD(perf - 1, 8) END,
         CONCAT('Performance ', perf),
         CASE WHEN perf <= 32 THEN DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (33 - perf) * 9 DAY)
              WHEN perf = 33 THEN DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 3 DAY)
@@ -155,11 +166,21 @@ BEGIN
       SET perf = perf + 1;
     END WHILE;
 
-    -- Three past sold-out performances (venues 1-3 each have 20+20+50 capacity).
+    -- Three past sold-out performances
     SET perf = 1;
     WHILE perf <= 3 DO
+      SELECT venueId INTO venue FROM Performances WHERE performanceId = perf;
+      SET sec1 = (venue - 1) * 3 + 1; SET sec2 = (venue - 1) * 3 + 2; SET sec3 = (venue - 1) * 3 + 3;
+      SELECT COUNT(*) INTO sec1Cap FROM Seats st JOIN SectionRows r ON r.rowId = st.rowId WHERE r.sectionId = sec1;
+      SELECT COUNT(*) INTO sec2Cap FROM Seats st JOIN SectionRows r ON r.rowId = st.rowId WHERE r.sectionId = sec2;
+      SELECT standingCapacity INTO gaCap FROM Sections WHERE sectionId = sec3;
+      SET totalCap = sec1Cap + sec2Cap + gaCap;
+      SELECT price INTO sec1Price FROM PriceTiers WHERE performanceId = perf AND tierName = 'Orchestra Premium';
+      SELECT price INTO sec2Price FROM PriceTiers WHERE performanceId = perf AND tierName = 'Balcony Standard';
+      SELECT price INTO gaPrice FROM PriceTiers WHERE performanceId = perf AND tierName = 'General Admission';
+
       SET ticket_no = 1;
-      WHILE ticket_no <= 90 DO
+      WHILE ticket_no <= totalCap DO
         IF MOD(ticket_no - 1, 3) = 0 THEN
           SET ord = ord + 1;
           SET customer = 6 + MOD(ord - 1, 100);
@@ -167,25 +188,25 @@ BEGIN
           VALUES (customer, perf, 1 + MOD(ord - 1, 100), DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (100 + ord) DAY), 250.00);
           SET order_id = LAST_INSERT_ID();
         END IF;
-        IF ticket_no <= 20 THEN
+        IF ticket_no <= sec1Cap THEN
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
-          VALUES (order_id, perf, (perf - 1) * 3 + 1,
+          VALUES (order_id, perf, sec1,
                   (SELECT ordered.seatId FROM (
                      SELECT st.seatId, ROW_NUMBER() OVER (ORDER BY r.rowName, st.seatNumber) AS seat_position
                      FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId
-                     WHERE r.sectionId=(perf-1)*3+1
-                   ) ordered WHERE ordered.seat_position=ticket_no), 130.00, customer, 'Active');
-        ELSEIF ticket_no <= 40 THEN
+                     WHERE r.sectionId=sec1
+                   ) ordered WHERE ordered.seat_position=ticket_no), sec1Price, customer, 'Active');
+        ELSEIF ticket_no <= sec1Cap + sec2Cap THEN
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
-          VALUES (order_id, perf, (perf - 1) * 3 + 2,
+          VALUES (order_id, perf, sec2,
                   (SELECT ordered.seatId FROM (
                      SELECT st.seatId, ROW_NUMBER() OVER (ORDER BY r.rowName, st.seatNumber) AS seat_position
                      FROM Seats st JOIN SectionRows r ON r.rowId=st.rowId
-                     WHERE r.sectionId=(perf-1)*3+2
-                   ) ordered WHERE ordered.seat_position=ticket_no-20), 90.00, customer, 'Active');
+                     WHERE r.sectionId=sec2
+                   ) ordered WHERE ordered.seat_position=ticket_no-sec1Cap), sec2Price, customer, 'Active');
         ELSE
           INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
-          VALUES (order_id, perf, (perf - 1) * 3 + 3, NULL, 50.00, customer, 'Active');
+          VALUES (order_id, perf, sec3, NULL, gaPrice, customer, 'Active');
         END IF;
         SET ticket_no = ticket_no + 1;
       END WHILE;
@@ -229,8 +250,9 @@ BEGIN
                ) ordered WHERE ordered.seat_position=(n*2)-1), 140.00, customer, 'Active');
       SET n = n + 1;
     END WHILE;
-    -- Extra purchases ensure two customers each bought 11 tickets and listed
-    -- more than half of them on the resale market below.
+    -- Extra purchases push customers 6 and 7 well past 10 tickets bought
+    -- (see the dynamic resale-listing counts below, which always list more
+    -- than half of whatever they end up owning).
     SET n = 1;
     WHILE n <= 4 DO
       SET customer = 6 + MOD(n - 1, 2);
@@ -245,9 +267,18 @@ BEGIN
     SELECT 34, MIN(s.seatId) + 19, 'Production camera position' FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId
     WHERE r.sectionId=((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+2;
 
-    -- Customer and organizer cancellations with refunds.
-    UPDATE Tickets SET status='Cancelled by customer', cancelledAt=DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 8 DAY)
-    WHERE ticketId IN (271, 274, 277);
+    -- Customer and organizer cancellations with refunds. (one ticket each
+    -- from three different customers, excluding the sold-out performances)
+    UPDATE Tickets t
+    JOIN (
+      SELECT ticketId FROM (
+        SELECT tk.ticketId, ROW_NUMBER() OVER (PARTITION BY o.customerId ORDER BY tk.ticketId) AS rn
+        FROM Tickets tk JOIN Orders o ON o.orderId = tk.orderId
+        WHERE tk.status = 'Active' AND o.performanceId NOT IN (1, 2, 3)
+      ) picks WHERE picks.rn = 1
+      ORDER BY picks.ticketId LIMIT 3
+    ) chosen ON chosen.ticketId = t.ticketId
+    SET t.status='Cancelled by customer', t.cancelledAt=DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 8 DAY);
     UPDATE Tickets SET status='Cancelled by organizer', cancelledAt=DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 20 DAY)
     WHERE performanceId IN (4,5) AND status='Active';
     INSERT INTO Refunds (ticketId, paymentId, amount, reason, refundedAt)
@@ -256,9 +287,11 @@ BEGIN
            t.cancelledAt
     FROM Tickets t JOIN Orders o ON o.orderId=t.orderId WHERE t.status <> 'Active';
 
-    -- Active, sold, and withdrawn resale listings.  Listings 1-14 are at their cap.
+    -- Active, sold, and withdrawn resale listings.
+    SELECT COUNT(*) INTO ownedCount FROM Tickets WHERE currentOwnerId=6 AND status='Active';
+    SET listCount = FLOOR(ownedCount / 2) + 1;
     SET n = 0;
-    WHILE n < 7 DO
+    WHILE n < listCount DO
       SELECT ticketId INTO selected_ticket FROM Tickets WHERE currentOwnerId=6 AND status='Active' ORDER BY ticketId LIMIT n,1;
       INSERT INTO ResaleListings (ticketId, sellerId, resalePrice, postedDate, status)
       SELECT t.ticketId, 6, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (n + 1) DAY),
@@ -271,8 +304,10 @@ BEGIN
       END IF;
       SET n=n+1;
     END WHILE;
+    SELECT COUNT(*) INTO ownedCount FROM Tickets WHERE currentOwnerId=7 AND status='Active';
+    SET listCount = FLOOR(ownedCount / 2) + 1;
     SET n = 0;
-    WHILE n < 7 DO
+    WHILE n < listCount DO
       SELECT ticketId INTO selected_ticket FROM Tickets WHERE currentOwnerId=7 AND status='Active' ORDER BY ticketId LIMIT n,1;
       INSERT INTO ResaleListings (ticketId, sellerId, resalePrice, postedDate, status)
       SELECT t.ticketId, 7, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (n + 2) DAY),
@@ -292,12 +327,24 @@ BEGIN
       SET perf = 19 + MOD(n - 1, 10);
       INSERT INTO Comments (customerId, performanceId, content, eventRating, venueRating)
       VALUES (40 + n, perf,
-        CONCAT('The performance had an engaging opening set and a confident final act. The venue staff kept the entry line moving, while the sound mix made the quieter moments easy to hear. Our group would happily return for another evening like this.'),
+        CASE MOD(n, 6)
+          WHEN 0 THEN 'The excellent sound quality made every song easy to enjoy, and the friendly staff greeted us warmly at the door. Comfortable seating meant we never had to shift around during the show. Overall this was a great value for the ticket price.'
+          WHEN 1 THEN 'Sadly the poor sound quality made it hard to hear the vocals clearly. We also ran into rude staff when asking a simple question near the entrance. The long lines before doors opened were frustrating and avoidable.'
+          WHEN 2 THEN 'From the excellent sound quality to the friendly staff at every entrance, this show felt well organized. Comfortable seating and a clear sightline made the night even better. A great value that we would happily pay again.'
+          WHEN 3 THEN 'An obstructed view from our seats was disappointing for a ticket at this price. The long lines at both entry and the merchandise table ate into our evening. On top of that the poor sound quality made the opening act hard to enjoy.'
+          WHEN 4 THEN 'Friendly staff and excellent sound quality set the tone for a great night out. Comfortable seating throughout the venue made the longer set feel effortless. We left feeling it was a great value from start to finish.'
+          ELSE 'Between the obstructed view and the rude staff at our section, this visit fell short of expectations. Long lines before the show cut into our evening more than we expected. The poor sound quality during the encore was the final disappointment.'
+        END,
         3 + MOD(n, 3), 3 + MOD(n + 1, 3));
       SET n=n+1;
     END WHILE;
 END$$
 
+-- Wrapped in an explicit transaction so that if any statement in the
+-- procedure fails, everything rolls back instead of leaving a half-loaded
+-- database behind (autocommit would otherwise commit each INSERT as it runs).
+START TRANSACTION$$
 CALL seed_mytix_full()$$
+COMMIT$$
 DROP PROCEDURE seed_mytix_full$$
 DELIMITER ;
