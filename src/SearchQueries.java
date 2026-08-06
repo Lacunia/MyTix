@@ -49,6 +49,8 @@ public class SearchQueries {
             "FROM ( " +
             "    SELECT p.performanceId, p.name AS performanceName, v.name AS venueName, " +
             "           p.dateTime AS performanceTime, cp.cheapestPrice, " +
+            "           (SELECT SUM(sa.availableSeatCount) FROM SectionAvailability sa " +
+            "             WHERE sa.performanceId = p.performanceId) AS available, " +
             "           ST_Distance_Sphere(POINT(v.longitude, v.latitude), POINT(?, ?)) / 1000 AS distanceKm " +
             "    FROM Performances p " +
             "    JOIN Venues v ON v.venueId = p.venueId " +
@@ -65,19 +67,20 @@ public class SearchQueries {
 
             try (ResultSet rs = ps.executeQuery()) {
                 System.out.printf(
-                    "%-6s %-30s %-32s %-25s %10s %10s%n",
-                    "ID", "Performance", "Venue", "Date/Time", "Dist(km)", "From $"
+                    "%-6s %-30s %-32s %-25s %10s %10s %10s%n",
+                    "ID", "Performance", "Venue", "Date/Time", "Dist(km)", "From $", "Available"
                 );
-                System.out.println("-".repeat(118));
+                System.out.println("-".repeat(129));
 
                 while (rs.next()) {
-                    System.out.printf("%-6d %-30s %-32s %-25s %10.2f %10.2f%n",
+                    System.out.printf("%-6d %-30s %-32s %-25s %10.2f %10.2f %10d%n",
                         rs.getInt("performanceId"),
                         rs.getString("performanceName"),
                         rs.getString("venueName"),
                         rs.getTimestamp("performanceTime").toString(),
                         rs.getDouble("distanceKm"),
-                        rs.getDouble("cheapestPrice")
+                        rs.getDouble("cheapestPrice"),
+                        rs.getInt("available")
                     );
                 }
             }
@@ -344,11 +347,15 @@ public class SearchQueries {
             "ORDER BY totalPrice ASC " +
             "LIMIT 1";  // Only want the cheapest start seat (to a consecutive seat block of 'quantity' seats)
         
-        // Later fetch the consecutive seat block that fit the requirements
+        // Later fetch the consecutive seat block that fit the requirements.
+        // Must also filter by performanceId: a section (and its seats) can be
+        // shared across many performances at the same venue, each with its
+        // own PerformanceSectionAssignments/price row, so the view returns
+        // one row per (seat, performance sharing that section) otherwise.
         String fetchSeatsQuery =
             "SELECT seatId, seatNumber, rowName, sectionName, price " +
             "FROM AvailableSeatsByPerformance " +
-            "WHERE rowId = ? AND seatNumber BETWEEN ? AND ? " +
+            "WHERE performanceId = ? AND rowId = ? AND seatNumber BETWEEN ? AND ? " +
             "ORDER BY seatNumber";
         
         // First, find the best starting seat (of a consecutive block)
@@ -379,9 +386,10 @@ public class SearchQueries {
 
             // Then, use the result from above, to get the consecutive seats
             try (PreparedStatement seatsPs = conn.prepareStatement(fetchSeatsQuery)) {
-                seatsPs.setInt(1, rowId);
-                seatsPs.setInt(2, startSeatNumber);
-                seatsPs.setInt(3, startSeatNumber + quantity - 1);
+                seatsPs.setInt(1, performanceId);
+                seatsPs.setInt(2, rowId);
+                seatsPs.setInt(3, startSeatNumber);
+                seatsPs.setInt(4, startSeatNumber + quantity - 1);
 
                 try (ResultSet rs = seatsPs.executeQuery()) {
                     System.out.printf("%-8s %-8s %-15s %-20s %10s%n",

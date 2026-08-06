@@ -5,10 +5,10 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -367,19 +367,75 @@ public class Reports {
             "HAVING COUNT(DISTINCT t.ticketId) >= 10 " +
             "  AND COUNT(DISTINCT rl.ticketId) > COUNT(DISTINCT t.ticketId)/2 " +
             "ORDER BY v.city, resalePct DESC";
-        printQuery(sql);
+
+        try (PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+            System.out.println("=== R4: Possible Scalpers by City ===");
+            System.out.printf("%-20s %-10s %-25s %10s %10s %10s%n",
+                "City", "CustID", "Customer", "Purchased", "Listed", "Resale %");
+            System.out.println("-".repeat(90));
+            while (rs.next()) {
+                System.out.printf("%-20s %-10d %-25s %10d %10d %9.1f%%%n",
+                    rs.getString("city"), rs.getInt("customerId"), rs.getString("name"),
+                    rs.getInt("purchased"), rs.getInt("listedForResale"), rs.getDouble("resalePct"));
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // R5: rank customers by number of orders in a time period, and (separately)
     // by number of orders per city — only customers with >= 2 orders that year for the latter.
     public void rankCustomersByOrders(LocalDate startDate, LocalDate endDate) {
-        String global = "SELECT u.name, COUNT(*) orders, DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) ranking " +
-            "FROM Orders o JOIN Users u ON u.userId=o.customerId WHERE o.purchaseTime >= ? AND o.purchaseTime < ? GROUP BY o.customerId,u.name ORDER BY ranking,u.name";
-        String city = "SELECT v.city,u.name,COUNT(*) orders,DENSE_RANK() OVER(PARTITION BY v.city ORDER BY COUNT(*) DESC) ranking " +
-            "FROM Orders o JOIN Users u ON u.userId=o.customerId JOIN Performances p ON p.performanceId=o.performanceId JOIN Venues v ON v.venueId=p.venueId " +
-            "WHERE o.purchaseTime >= ? AND o.purchaseTime < ? GROUP BY v.city,o.customerId,u.name HAVING COUNT(*)>=2 ORDER BY v.city,ranking,u.name";
-        printQuery(global, startDate, endDate.plusDays(1));
-        printQuery(city, startDate, endDate.plusDays(1));
+        String global =
+            "SELECT o.customerId, u.name, COUNT(*) orders, " +
+            "       DENSE_RANK() OVER (ORDER BY COUNT(*) DESC) ranking " +
+            "FROM Orders o JOIN Users u ON u.userId=o.customerId " +
+            "WHERE o.purchaseTime >= ? AND o.purchaseTime < ? " +
+            "GROUP BY o.customerId, u.name " +
+            "ORDER BY ranking, u.name";
+        String city =
+            "SELECT v.city, o.customerId, u.name, COUNT(*) orders, " +
+            "       DENSE_RANK() OVER (PARTITION BY v.city ORDER BY COUNT(*) DESC) ranking " +
+            "FROM Orders o JOIN Users u ON u.userId=o.customerId " +
+            "JOIN Performances p ON p.performanceId=o.performanceId JOIN Venues v ON v.venueId=p.venueId " +
+            "WHERE o.purchaseTime >= ? AND o.purchaseTime < ? " +
+            "GROUP BY v.city, o.customerId, u.name " +
+            "HAVING COUNT(*) >= 2 " +
+            "ORDER BY v.city, ranking, u.name";
+        LocalDate endExclusive = endDate.plusDays(1);
+
+        try (PreparedStatement ps = conn.prepareStatement(global)) {
+            ps.setObject(1, startDate);
+            ps.setObject(2, endExclusive);
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("=== Customers Ranked by Orders Placed ===");
+                System.out.printf("%-6s %-10s %-25s %10s%n", "Rank", "CustID", "Customer", "Orders");
+                System.out.println("-".repeat(53));
+                while (rs.next()) {
+                    System.out.printf("%-6d %-10d %-25s %10d%n",
+                        rs.getInt("ranking"), rs.getInt("customerId"), rs.getString("name"), rs.getInt("orders"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement(city)) {
+            ps.setObject(1, startDate);
+            ps.setObject(2, endExclusive);
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("\n=== Customers Ranked by Orders Placed, per City (>= 2 orders) ===");
+                System.out.printf("%-20s %-6s %-10s %-25s %10s%n", "City", "Rank", "CustID", "Customer", "Orders");
+                System.out.println("-".repeat(73));
+                while (rs.next()) {
+                    System.out.printf("%-20s %-6d %-10d %-25s %10d%n",
+                        rs.getString("city"), rs.getInt("ranking"), rs.getInt("customerId"),
+                        rs.getString("name"), rs.getInt("orders"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // R6: We also wish to report the customers with the largest number of cancelled tickets and the
@@ -479,7 +535,7 @@ public class Reports {
 
     // R7: sell-through rate per price tier of a performance (blocked seats
     // excluded from sellable capacity, GA capacity counts).
-    public void sellThroughByTier(LocalDate month, String city) {
+    public void sellThroughByTier(YearMonth month, String city) {
         String sql =
             "SELECT p.performanceId, p.name, v.city, pt.tierName, " +
             "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
@@ -497,16 +553,30 @@ public class Reports {
             "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
             "GROUP BY p.performanceId, p.name, v.city, pt.tierName " +
             "ORDER BY p.performanceId, pt.tierName";
-        System.out.println("=== R7: Sell-through rate by price tier ===");
-        if (city == null) {
-            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
-        } else {
-            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, month.atDay(1));
+            ps.setObject(2, month.plusMonths(1).atDay(1));
+            if (city != null) ps.setString(3, city);
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("=== R7: Sell-through Rate by Price Tier ===");
+                System.out.printf("%-6s %-25s %-20s %-20s %10s %10s %10s%n",
+                    "PerfID", "Performance", "City", "Tier", "Sellable", "Sold", "Sell%");
+                System.out.println("-".repeat(107));
+                while (rs.next()) {
+                    System.out.printf("%-6d %-25s %-20s %-20s %10d %10d %9.1f%%%n",
+                        rs.getInt("performanceId"), rs.getString("name"), rs.getString("city"),
+                        rs.getString("tierName"), rs.getInt("sellable"), rs.getInt("sold"),
+                        rs.getDouble("sellThrough") * 100);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
     // R7: sell-through rate per performance, summed across all of its tiers/sections.
-    public void sellThroughByPerformance(LocalDate month, String city) {
+    public void sellThroughByPerformance(YearMonth month, String city) {
         String sql =
             "SELECT p.performanceId, p.name, v.city, " +
             "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
@@ -523,17 +593,30 @@ public class Reports {
             "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
             "GROUP BY p.performanceId, p.name, v.city " +
             "ORDER BY p.performanceId";
-        System.out.println("\n=== R7: Sell-through rate by performance ===");
-        if (city == null) {
-            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
-        } else {
-            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, month.atDay(1));
+            ps.setObject(2, month.plusMonths(1).atDay(1));
+            if (city != null) ps.setString(3, city);
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("\n=== R7: Sell-through Rate by Performance ===");
+                System.out.printf("%-6s %-25s %-20s %10s %10s %10s%n",
+                    "PerfID", "Performance", "City", "Sellable", "Sold", "Sell%");
+                System.out.println("-".repeat(86));
+                while (rs.next()) {
+                    System.out.printf("%-6d %-25s %-20s %10d %10d %9.1f%%%n",
+                        rs.getInt("performanceId"), rs.getString("name"), rs.getString("city"),
+                        rs.getInt("sellable"), rs.getInt("sold"), rs.getDouble("sellThrough") * 100);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
     // R7: for a given month, by city, performances that sold out (100%) and
     // performances that sold less than a quarter of their sellable capacity.
-    public void sellThroughExtremesByCityForMonth(LocalDate month) {
+    public void sellThroughExtremesByCityForMonth(YearMonth month) {
         String base =
             "SELECT p.performanceId, p.name, v.city, " +
             "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
@@ -550,13 +633,45 @@ public class Reports {
             "WHERE p.dateTime >= ? AND p.dateTime < ? " +
             "GROUP BY p.performanceId, p.name, v.city ";
 
-        System.out.println("\n=== R7: Sold-out performances in " + month.getMonth() + " " + month.getYear() + ", by city ===");
-        printQuery("SELECT city, performanceId, name, sellable, sold FROM (" + base + ") x WHERE sellThrough >= 1 ORDER BY city, performanceId",
-            month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        String soldOutSql = "SELECT city, performanceId, name, sellable, sold FROM (" + base
+            + ") x WHERE sellThrough >= 1 ORDER BY city, performanceId";
+        String underQuarterSql = "SELECT city, performanceId, name, sellable, sold, sellThrough FROM (" + base
+            + ") x WHERE sellThrough < 0.25 ORDER BY city, performanceId";
 
-        System.out.println("\n=== R7: Performances that sold < 25% of capacity in " + month.getMonth() + " " + month.getYear() + ", by city ===");
-        printQuery("SELECT city, performanceId, name, sellable, sold, sellThrough FROM (" + base + ") x WHERE sellThrough < 0.25 ORDER BY city, performanceId",
-            month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        try (PreparedStatement ps = conn.prepareStatement(soldOutSql)) {
+            ps.setObject(1, month.atDay(1));
+            ps.setObject(2, month.plusMonths(1).atDay(1));
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("\n=== R7: Sold-out Performances in " + month + ", by City ===");
+                System.out.printf("%-20s %-6s %-25s %10s %10s%n", "City", "PerfID", "Performance", "Sellable", "Sold");
+                System.out.println("-".repeat(75));
+                while (rs.next()) {
+                    System.out.printf("%-20s %-6d %-25s %10d %10d%n",
+                        rs.getString("city"), rs.getInt("performanceId"), rs.getString("name"),
+                        rs.getInt("sellable"), rs.getInt("sold"));
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement(underQuarterSql)) {
+            ps.setObject(1, month.atDay(1));
+            ps.setObject(2, month.plusMonths(1).atDay(1));
+            try (ResultSet rs = ps.executeQuery()) {
+                System.out.println("\n=== R7: Performances That Sold < 25% of Capacity in " + month + ", by City ===");
+                System.out.printf("%-20s %-6s %-25s %10s %10s %10s%n",
+                    "City", "PerfID", "Performance", "Sellable", "Sold", "Sell%");
+                System.out.println("-".repeat(86));
+                while (rs.next()) {
+                    System.out.printf("%-20s %-6d %-25s %10d %10d %9.1f%%%n",
+                        rs.getString("city"), rs.getInt("performanceId"), rs.getString("name"),
+                        rs.getInt("sellable"), rs.getInt("sold"), rs.getDouble("sellThrough") * 100);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     // R8: per event — completed resales count, avg markup over face value,
@@ -578,32 +693,33 @@ public class Reports {
             "COALESCE(c.avgMarkup,0) avgMarkup,COALESCE(l.exactCapPct,0) exactCapPct " +
             "FROM Events e LEFT JOIN completed c ON c.eventId=e.eventId LEFT JOIN listings l ON l.eventId=e.eventId ";
         LocalDate endExclusive = endDate.plusDays(1);
-        System.out.println("=== R8: Resale metrics for every event ===");
-        printQuery(metrics + "ORDER BY e.eventId", startDate, endExclusive, startDate, endExclusive);
-        System.out.println("=== R8: Top 10 events by completed resale volume ===");
-        printQuery(metrics + "ORDER BY completedResales DESC, e.eventId LIMIT 10", startDate, endExclusive, startDate, endExclusive);
+        System.out.println("=== R8: Resale Metrics for Every Event ===");
+        printResaleMetrics(metrics + "ORDER BY e.eventId", startDate, endExclusive);
+        System.out.println("\n=== R8: Top 10 Events by Completed Resale Volume ===");
+        printResaleMetrics(metrics + "ORDER BY completedResales DESC, e.eventId LIMIT 10", startDate, endExclusive);
     }
 
-    private void printQuery(String sql, Object... params) {
+    private void printResaleMetrics(String sql, LocalDate startDate, LocalDate endExclusive) {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) {
-                ps.setObject(i + 1, params[i]);
-            }
+            ps.setObject(1, startDate);
+            ps.setObject(2, endExclusive);
+            ps.setObject(3, startDate);
+            ps.setObject(4, endExclusive);
             try (ResultSet rs = ps.executeQuery()) {
-                ResultSetMetaData meta = rs.getMetaData();
-                for (int i = 1; i <= meta.getColumnCount(); i++) {
-                    System.out.print(meta.getColumnLabel(i) + (i == meta.getColumnCount() ? "\n" : " | "));
-                }
+                System.out.printf("%-6s %-30s %15s %12s %10s%n",
+                    "EvtID", "Title", "Completed", "Avg Markup", "At Cap %");
+                System.out.println("-".repeat(76));
                 while (rs.next()) {
-                    for (int i = 1; i <= meta.getColumnCount(); i++) {
-                        System.out.print(rs.getObject(i) + (i == meta.getColumnCount() ? "\n" : " | "));
-                    }
+                    System.out.printf("%-6d %-30s %15d %12.2f %9.1f%%%n",
+                        rs.getInt("eventId"), rs.getString("title"), rs.getInt("completedResales"),
+                        rs.getDouble("avgMarkup"), rs.getDouble("exactCapPct"));
                 }
             }
         } catch (SQLException e) {
-            throw new RuntimeException("Report failed.", e);
+            throw new RuntimeException(e);
         }
     }
+
 
     // R9: most popular noun phrases per event, derived from Comments.content
     // (SQL pulls the raw text; a Java NLP library does the phrase extraction).
@@ -663,10 +779,10 @@ public class Reports {
 
             // Display top phrases for this event
             System.out.println("\n=== Event #" + eventId + " - " + title + " ===");
-            System.out.printf("%-35s %10s%n", "Phrase", "Count");
-            System.out.println("-".repeat(46));
+            System.out.printf("%-45s %10s%n", "Phrase", "Count");
+            System.out.println("-".repeat(57));
             for (Map.Entry<String, Integer> phraseEntry : topPhrases) {
-                System.out.printf("%-35s %10d%n", phraseEntry.getKey(), phraseEntry.getValue());
+                System.out.printf("%-45s %10d%n", phraseEntry.getKey(), phraseEntry.getValue());
             }
         }
     }

@@ -2,6 +2,7 @@ import java.math.BigDecimal;
 import java.sql.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.*;
 
 /** Console entry point.  Guests, customers, and organizers are deliberately
@@ -251,7 +252,10 @@ public class DbConnector {
                     }
                     case "7" -> {
                         int p = ownedPerformance(c, in, organizerId);
-                        boolean blocked = events.blockSeat(p, seats(c, p, in, false).get(0));
+                        int seatId = seats(c, p, in, false).get(0);
+                        System.out.print("Reason (optional, e.g. Obstructed view, Production equipment): ");
+                        String reason = in.nextLine();
+                        boolean blocked = events.blockSeat(p, seatId, reason);
                         System.out.println(blocked ? "Seat blocked." : "Seat has been sold.");
                     }
                     case "8" -> events.cancelPerformance(ownedPerformance(c, in, organizerId));
@@ -290,7 +294,7 @@ public class DbConnector {
         Reports r = new Reports(c);
         while (true) {
             System.out.println("\nGuest access — queries and reports");
-            System.out.println("Formats: date YYYY-MM-DD (e.g. 2026-08-15); date/time YYYY-MM-DDTHH:MM (e.g. 2026-08-15T19:30); amounts 49.99; blank means no filter.");
+            System.out.println("Formats: date YYYY-MM-DD (e.g. 2026-08-15); date/time YYYY-MM-DDTHH:MM (e.g. 2026-08-15T19:30); month YYYY-MM (e.g. 2026-08); amounts 49.99; blank means no filter.");
             System.out.println("Queries: 1) Q1 Location  2) Q2 Postal  3) Q3 Address  4) Q4 Date/capacity  4b) Q4+Q1 Location+date  4c) Q4+Q2 Postal+date  4d) Q4+Q3 Address+date  5) Q5 Filters  6) Q6 Seat map  7) Q7 Best seats");
             System.out.println("Reports: r1) City revenue  r1b) Venue revenue  r2) Taxonomy  r3/r3b/r3c) Organizers  r4) Scalpers  r5) Orders  r6) Cancellations  r7/r7b/r7c) Sell-through  r8) Resale  r9) Comments  0) Back");
             System.out.print("Choice: ");
@@ -388,23 +392,23 @@ public class DbConnector {
                         r.mostCancellations(Integer.parseInt(in.nextLine()));
                     }
                     case "r7" -> {
-                        System.out.print("Month YYYY-MM-DD: ");
+                        System.out.print("Month (YYYY-MM): ");
                         String m = in.nextLine();
                         System.out.print("City (blank=all): ");
                         String city = in.nextLine();
-                        r.sellThroughByTier(LocalDate.parse(m), city.isBlank() ? null : city);
+                        r.sellThroughByTier(YearMonth.parse(m), city.isBlank() ? null : city);
                     }
                     case "r7b" -> {
-                        System.out.print("Month YYYY-MM-DD: ");
+                        System.out.print("Month (YYYY-MM): ");
                         String m = in.nextLine();
                         System.out.print("City (blank=all): ");
                         String city = in.nextLine();
-                        r.sellThroughByPerformance(LocalDate.parse(m), city.isBlank() ? null : city);
+                        r.sellThroughByPerformance(YearMonth.parse(m), city.isBlank() ? null : city);
                     }
                     case "r7c" -> {
-                        System.out.print("Month YYYY-MM-DD: ");
+                        System.out.print("Month (YYYY-MM): ");
                         String m = in.nextLine();
-                        r.sellThroughExtremesByCityForMonth(LocalDate.parse(m));
+                        r.sellThroughExtremesByCityForMonth(YearMonth.parse(m));
                     }
                     case "r8" -> dates(in, r::resaleReport);
                     case "r9" -> r.topNounPhrasesByEvent();

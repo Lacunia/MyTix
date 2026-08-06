@@ -263,9 +263,22 @@ BEGIN
       VALUES (order_id, 35, ((SELECT venueId FROM Performances WHERE performanceId=35)-1)*3+3, NULL, 55.00, customer, 'Active');
       SET n = n + 1;
     END WHILE;
+    SET n = 1;
+    WHILE n <= 2 DO
+      INSERT INTO Orders (customerId, performanceId, paymentId, purchaseTime, totalPaid)
+      VALUES (6, 35, 1, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (n + 10) DAY), 55.00);
+      SET order_id = LAST_INSERT_ID();
+      INSERT INTO Tickets (orderId, performanceId, sectionId, seatId, price, currentOwnerId, status)
+      VALUES (order_id, 35, ((SELECT venueId FROM Performances WHERE performanceId=35)-1)*3+3, NULL, 55.00, 6, 'Active');
+      SET n = n + 1;
+    END WHILE;
+    -- Balcony's seatIds are not contiguous (rows are inserted interleaved
+    -- with Orchestra's), so pick the actual last seat of Balcony by seatId
+    -- rather than assuming an offset from its minimum.
     INSERT INTO BlockedSeats (performanceId, seatId, reason)
-    SELECT 34, MIN(s.seatId) + 19, 'Production camera position' FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId
-    WHERE r.sectionId=((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+2;
+    SELECT 34, s.seatId, 'Production camera position' FROM Seats s JOIN SectionRows r ON r.rowId=s.rowId
+    WHERE r.sectionId=((SELECT venueId FROM Performances WHERE performanceId=34)-1)*3+2
+    ORDER BY s.seatId DESC LIMIT 1;
 
     -- Customer and organizer cancellations with refunds. (one ticket each
     -- from three different customers, excluding the sold-out performances)
@@ -292,7 +305,10 @@ BEGIN
     SET listCount = FLOOR(ownedCount / 2) + 1;
     SET n = 0;
     WHILE n < listCount DO
-      SELECT ticketId INTO selected_ticket FROM Tickets WHERE currentOwnerId=6 AND status='Active' ORDER BY ticketId LIMIT n,1;
+      SELECT t.ticketId INTO selected_ticket
+      FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId JOIN Venues v ON v.venueId=p.venueId
+      WHERE t.currentOwnerId=6 AND t.status='Active'
+      ORDER BY (v.city='Toronto') DESC, t.ticketId LIMIT n,1;
       INSERT INTO ResaleListings (ticketId, sellerId, resalePrice, postedDate, status)
       SELECT t.ticketId, 6, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (n + 1) DAY),
              CASE WHEN n < 3 THEN 'Sold' WHEN n < 5 THEN 'Withdrawn' ELSE 'Active' END
@@ -308,17 +324,29 @@ BEGIN
     SET listCount = FLOOR(ownedCount / 2) + 1;
     SET n = 0;
     WHILE n < listCount DO
-      SELECT ticketId INTO selected_ticket FROM Tickets WHERE currentOwnerId=7 AND status='Active' ORDER BY ticketId LIMIT n,1;
+      SELECT t.ticketId INTO selected_ticket
+      FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId JOIN Venues v ON v.venueId=p.venueId
+      WHERE t.currentOwnerId=7 AND t.status='Active'
+      ORDER BY (v.city='Toronto') DESC, t.ticketId LIMIT n,1;
       INSERT INTO ResaleListings (ticketId, sellerId, resalePrice, postedDate, status)
       SELECT t.ticketId, 7, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL (n + 2) DAY),
              CASE WHEN n < 2 THEN 'Sold' WHEN n < 4 THEN 'Withdrawn' ELSE 'Active' END
       FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId JOIN Events e ON e.eventId=p.eventId WHERE t.ticketId=selected_ticket;
       SET n=n+1;
     END WHILE;
+    -- A ticket that changes hands twice, each transfer priced at the event's
+    -- resale cap (like every other listing here) so the transaction price is
+    -- realistic relative to the ticket's own face value, not an arbitrary
+    -- fixed dollar amount unrelated to it.
     SELECT ticketId INTO selected_ticket FROM Tickets WHERE currentOwnerId=8 AND status='Active' ORDER BY ticketId LIMIT 1;
-    INSERT INTO TicketOwnershipHistory (ticketId, sellerId, buyerId, transactionPrice, transactionDate) VALUES
-      (selected_ticket, 8, 30, 55.00, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 12 DAY)),
-      (selected_ticket, 30, 31, 58.00, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY));
+    INSERT INTO TicketOwnershipHistory (ticketId, sellerId, buyerId, transactionPrice, transactionDate)
+    SELECT selected_ticket, 8, 30, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 12 DAY)
+    FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId JOIN Events e ON e.eventId=p.eventId
+    WHERE t.ticketId=selected_ticket;
+    INSERT INTO TicketOwnershipHistory (ticketId, sellerId, buyerId, transactionPrice, transactionDate)
+    SELECT selected_ticket, 30, 31, t.price * e.resalePriceCap, DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)
+    FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId JOIN Events e ON e.eventId=p.eventId
+    WHERE t.ticketId=selected_ticket;
     UPDATE Tickets SET currentOwnerId=31 WHERE ticketId=selected_ticket;
 
     -- Thirty multi-sentence reviews for ten different past events, three each.

@@ -317,10 +317,17 @@ public class EventOperations {
     // transaction with a row lock on the seat's active tickets so a concurrent
     // booking can't sell the seat between the check and the insert.
     public boolean blockSeat(int performanceId, int seatId) {
+        return blockSeat(performanceId, seatId, null);
+    }
+
+    // reason - free text explaining why the seat is unsellable for this
+    // performance (e.g. "Obstructed view", "Production equipment"). Optional.
+    public boolean blockSeat(int performanceId, int seatId, String reason) {
         String checkSql =
             "SELECT COUNT(*) FROM Tickets " +
             "WHERE performanceId = ? AND seatId = ? AND status = 'Active' FOR UPDATE";
-        String insertSql = "INSERT INTO BlockedSeats (performanceId, seatId) VALUES (?, ?)";
+        String insertSql = "INSERT INTO BlockedSeats (performanceId, seatId, reason) VALUES (?, ?, ?)";
+        String trimmedReason = (reason == null || reason.isBlank()) ? null : reason.trim();
 
         try {
             conn.setAutoCommit(false);
@@ -338,6 +345,7 @@ public class EventOperations {
             try (PreparedStatement insertStmt = conn.prepareStatement(insertSql)) {
                 insertStmt.setInt(1, performanceId);
                 insertStmt.setInt(2, seatId);
+                insertStmt.setString(3, trimmedReason);
                 insertStmt.executeUpdate();
             }
             conn.commit();
