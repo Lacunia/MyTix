@@ -22,15 +22,25 @@ public class ReviewOperations {
         }
         String attendance = "SELECT p.performanceId FROM Tickets t JOIN Performances p ON p.performanceId=t.performanceId " +
             "WHERE t.currentOwnerId=? AND t.status='Active' AND p.performanceId=? AND p.dateTime<NOW()";
-        try (PreparedStatement find=conn.prepareStatement(attendance)) {
-            find.setInt(1,customerId); find.setInt(2,performanceId);
-            try(ResultSet rs=find.executeQuery()) {
-                if(!rs.next()) return false;
-                try(PreparedStatement insert=conn.prepareStatement("INSERT INTO Comments (customerId,performanceId,content,eventRating,venueRating) VALUES (?,?,?,?,?)")) {
-                    insert.setInt(1,customerId);insert.setInt(2,rs.getInt(1));insert.setString(3,content.trim());insert.setInt(4,eventRating);insert.setInt(5,venueRating);
-                    return insert.executeUpdate()==1;
+        try (PreparedStatement find = conn.prepareStatement(attendance)) {
+            find.setInt(1, customerId);
+            find.setInt(2, performanceId);
+            try (ResultSet rs = find.executeQuery()) {
+                if (!rs.next()) {
+                    return false;
+                }
+                try (PreparedStatement insert = conn.prepareStatement(
+                        "INSERT INTO Comments (customerId,performanceId,content,eventRating,venueRating) VALUES (?,?,?,?,?)")) {
+                    insert.setInt(1, customerId);
+                    insert.setInt(2, rs.getInt(1));
+                    insert.setString(3, content.trim());
+                    insert.setInt(4, eventRating);
+                    insert.setInt(5, venueRating);
+                    return insert.executeUpdate() == 1;
                 }
             }
-        } catch(SQLException e) { throw new RuntimeException("Unable to add review.",e); }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to add review.", e);
+        }
     }
 }

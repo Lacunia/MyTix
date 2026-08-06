@@ -480,48 +480,75 @@ public class Reports {
     // R7: sell-through rate per price tier of a performance (blocked seats
     // excluded from sellable capacity, GA capacity counts).
     public void sellThroughByTier(LocalDate month, String city) {
-        String sql = "SELECT p.performanceId,p.name,v.city,pt.tierName, " +
-            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable,COALESCE(SUM(sold.soldCount),0) sold, " +
-            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
-            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
-            "JOIN PriceTiers pt ON pt.tierId=psa.tierId JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
-            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+        String sql =
+            "SELECT p.performanceId, p.name, v.city, pt.tierName, " +
+            "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
+            "       COALESCE(SUM(sold.soldCount),0) sold, " +
+            "       CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 " +
+            "            ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p " +
+            "JOIN Venues v ON v.venueId=p.venueId " +
+            "JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+            "JOIN PriceTiers pt ON pt.tierId=psa.tierId " +
+            "JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
+            "LEFT JOIN ( " +
+            "    SELECT performanceId, sectionId, COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId " +
+            ") sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
             "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
-            "GROUP BY p.performanceId,p.name,v.city,pt.tierName ORDER BY p.performanceId,pt.tierName";
+            "GROUP BY p.performanceId, p.name, v.city, pt.tierName " +
+            "ORDER BY p.performanceId, pt.tierName";
         System.out.println("=== R7: Sell-through rate by price tier ===");
-        if (city == null) printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
-        else printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+        if (city == null) {
+            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        } else {
+            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+        }
     }
 
     // R7: sell-through rate per performance, summed across all of its tiers/sections.
     public void sellThroughByPerformance(LocalDate month, String city) {
-        String sql = "SELECT p.performanceId,p.name,v.city, " +
-            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable,COALESCE(SUM(sold.soldCount),0) sold, " +
-            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
-            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+        String sql =
+            "SELECT p.performanceId, p.name, v.city, " +
+            "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
+            "       COALESCE(SUM(sold.soldCount),0) sold, " +
+            "       CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 " +
+            "            ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p " +
+            "JOIN Venues v ON v.venueId=p.venueId " +
+            "JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
             "JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
-            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+            "LEFT JOIN ( " +
+            "    SELECT performanceId, sectionId, COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId " +
+            ") sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
             "WHERE p.dateTime >= ? AND p.dateTime < ? " + (city == null ? "" : "AND v.city=? ") +
-            "GROUP BY p.performanceId,p.name,v.city ORDER BY p.performanceId";
+            "GROUP BY p.performanceId, p.name, v.city " +
+            "ORDER BY p.performanceId";
         System.out.println("\n=== R7: Sell-through rate by performance ===");
-        if (city == null) printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
-        else printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+        if (city == null) {
+            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1));
+        } else {
+            printQuery(sql, month.withDayOfMonth(1), month.withDayOfMonth(1).plusMonths(1), city);
+        }
     }
 
     // R7: for a given month, by city, performances that sold out (100%) and
     // performances that sold less than a quarter of their sellable capacity.
     public void sellThroughExtremesByCityForMonth(LocalDate month) {
         String base =
-            "SELECT p.performanceId,p.name,v.city, " +
-            "SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
-            "COALESCE(SUM(sold.soldCount),0) sold, " +
-            "CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 " +
-            "     ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
-            "FROM Performances p JOIN Venues v ON v.venueId=p.venueId JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
+            "SELECT p.performanceId, p.name, v.city, " +
+            "       SUM(sa.availableSeatCount + COALESCE(sold.soldCount,0)) sellable, " +
+            "       COALESCE(SUM(sold.soldCount),0) sold, " +
+            "       CASE WHEN SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0))=0 THEN 0 " +
+            "            ELSE COALESCE(SUM(sold.soldCount),0)/SUM(sa.availableSeatCount+COALESCE(sold.soldCount,0)) END sellThrough " +
+            "FROM Performances p " +
+            "JOIN Venues v ON v.venueId=p.venueId " +
+            "JOIN PerformanceSectionAssignments psa ON psa.performanceId=p.performanceId " +
             "JOIN SectionAvailability sa ON sa.performanceId=p.performanceId AND sa.sectionId=psa.sectionId " +
-            "LEFT JOIN (SELECT performanceId,sectionId,COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId) sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
+            "LEFT JOIN ( " +
+            "    SELECT performanceId, sectionId, COUNT(*) soldCount FROM Tickets WHERE status='Active' GROUP BY performanceId,sectionId " +
+            ") sold ON sold.performanceId=p.performanceId AND sold.sectionId=psa.sectionId " +
             "WHERE p.dateTime >= ? AND p.dateTime < ? " +
-            "GROUP BY p.performanceId,p.name,v.city ";
+            "GROUP BY p.performanceId, p.name, v.city ";
 
         System.out.println("\n=== R7: Sold-out performances in " + month.getMonth() + " " + month.getYear() + ", by city ===");
         printQuery("SELECT city, performanceId, name, sellable, sold FROM (" + base + ") x WHERE sellThrough >= 1 ORDER BY city, performanceId",
@@ -559,13 +586,23 @@ public class Reports {
 
     private void printQuery(String sql, Object... params) {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i=0;i<params.length;i++) ps.setObject(i+1, params[i]);
-            try (ResultSet rs=ps.executeQuery()) {
-                ResultSetMetaData meta=rs.getMetaData();
-                for(int i=1;i<=meta.getColumnCount();i++) System.out.print(meta.getColumnLabel(i)+(i==meta.getColumnCount()?"\n":" | "));
-                while(rs.next()) { for(int i=1;i<=meta.getColumnCount();i++) System.out.print(rs.getObject(i)+(i==meta.getColumnCount()?"\n":" | ")); }
+            for (int i = 0; i < params.length; i++) {
+                ps.setObject(i + 1, params[i]);
             }
-        } catch(SQLException e) { throw new RuntimeException("Report failed.",e); }
+            try (ResultSet rs = ps.executeQuery()) {
+                ResultSetMetaData meta = rs.getMetaData();
+                for (int i = 1; i <= meta.getColumnCount(); i++) {
+                    System.out.print(meta.getColumnLabel(i) + (i == meta.getColumnCount() ? "\n" : " | "));
+                }
+                while (rs.next()) {
+                    for (int i = 1; i <= meta.getColumnCount(); i++) {
+                        System.out.print(rs.getObject(i) + (i == meta.getColumnCount() ? "\n" : " | "));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Report failed.", e);
+        }
     }
 
     // R9: most popular noun phrases per event, derived from Comments.content
@@ -669,8 +706,12 @@ public class Reports {
                 StringBuilder phrase = new StringBuilder();
                 boolean hasNoun = false;
                 for (int i = chunk.getStart(); i < chunk.getEnd(); i++) {
-                    if (tags[i].startsWith("NN")) hasNoun = true;
-                    if (phrase.length() > 0) phrase.append(' ');
+                    if (tags[i].startsWith("NN")) {
+                        hasNoun = true;
+                    }
+                    if (phrase.length() > 0) {
+                        phrase.append(' ');
+                    }
                     phrase.append(tokens[i].toLowerCase());
                 }
 

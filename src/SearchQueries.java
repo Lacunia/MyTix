@@ -89,7 +89,9 @@ public class SearchQueries {
     // Q2: upcoming performances at venues in the same or adjacent postal codes.
     public void searchByPostalCode(String postalCode) {
         String normalized = postalCode.replaceAll("\\s+", "").toUpperCase();
-        if (normalized.isBlank()) throw new IllegalArgumentException("Postal code is required.");
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("Postal code is required.");
+        }
         String prefix = normalized.substring(0, Math.min(3, normalized.length()));
         String extra = " AND (REPLACE(UPPER(v.postalCode), ' ', '') = ? OR EXISTS (" +
             "SELECT 1 FROM PostalCodeAdjacency pa WHERE pa.postalPrefix = ? " +
@@ -99,7 +101,9 @@ public class SearchQueries {
 
     // Q3: exact address match -> that venue's upcoming performances.
     public void searchByAddress(String address) {
-        if (address == null || address.isBlank()) throw new IllegalArgumentException("Address is required.");
+        if (address == null || address.isBlank()) {
+            throw new IllegalArgumentException("Address is required.");
+        }
         runFiltered(" AND v.address = ?", List.of(address.trim()), new PerformanceFilter());
     }
 
@@ -107,7 +111,9 @@ public class SearchQueries {
     // available ticket count filter. Plain form (no location refinement).
     public void searchWithDateRange(LocalDateTime start, LocalDateTime end, int minAvailable) {
         PerformanceFilter filter = new PerformanceFilter();
-        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        filter.start = start;
+        filter.end = end;
+        filter.minAvailable = minAvailable;
         filteredSearch(filter);
     }
 
@@ -115,29 +121,41 @@ public class SearchQueries {
     public void searchByLocationWithDateRange(double lat, double lon, double radiusKm,
                                                LocalDateTime start, LocalDateTime end, int minAvailable) {
         PerformanceFilter filter = new PerformanceFilter();
-        filter.lat = lat; filter.lon = lon; filter.radiusKm = radiusKm;
-        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        filter.lat = lat;
+        filter.lon = lon;
+        filter.radiusKm = radiusKm;
+        filter.start = start;
+        filter.end = end;
+        filter.minAvailable = minAvailable;
         runFiltered("", List.of(), filter);
     }
 
     // Q4 chained onto Q2: same postal-code (+adjacent) search, refined by date range + min available.
     public void searchByPostalCodeWithDateRange(String postalCode, LocalDateTime start, LocalDateTime end, int minAvailable) {
         String normalized = postalCode.replaceAll("\\s+", "").toUpperCase();
-        if (normalized.isBlank()) throw new IllegalArgumentException("Postal code is required.");
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("Postal code is required.");
+        }
         String prefix = normalized.substring(0, Math.min(3, normalized.length()));
         String extra = " AND (REPLACE(UPPER(v.postalCode), ' ', '') = ? OR EXISTS (" +
             "SELECT 1 FROM PostalCodeAdjacency pa WHERE pa.postalPrefix = ? " +
             "AND pa.adjacentPrefix = LEFT(REPLACE(UPPER(v.postalCode), ' ', ''), 3)))";
         PerformanceFilter filter = new PerformanceFilter();
-        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        filter.start = start;
+        filter.end = end;
+        filter.minAvailable = minAvailable;
         runFiltered(extra, List.of(normalized, prefix), filter);
     }
 
     // Q4 chained onto Q3: same exact-address search, refined by date range + min available.
     public void searchByAddressWithDateRange(String address, LocalDateTime start, LocalDateTime end, int minAvailable) {
-        if (address == null || address.isBlank()) throw new IllegalArgumentException("Address is required.");
+        if (address == null || address.isBlank()) {
+            throw new IllegalArgumentException("Address is required.");
+        }
         PerformanceFilter filter = new PerformanceFilter();
-        filter.start = start; filter.end = end; filter.minAvailable = minAvailable;
+        filter.start = start;
+        filter.end = end;
+        filter.minAvailable = minAvailable;
         runFiltered(" AND v.address = ?", List.of(address.trim()), filter);
     }
 
@@ -145,7 +163,9 @@ public class SearchQueries {
     // range on cheapest available ticket, min available count, reserved
     // seating vs GA — all combinable.
     public void filteredSearch(PerformanceFilter filter) {
-        if (filter == null) filter = new PerformanceFilter();
+        if (filter == null) {
+            filter = new PerformanceFilter();
+        }
         runFiltered("", List.of(), filter);
     }
 
@@ -171,33 +191,69 @@ public class SearchQueries {
 
         List<Object> params = new ArrayList<>(extraParameters);
         sql.append(extraWhere);
-        if (f.segment != null) { sql.append(" AND tx.segment = ?"); params.add(f.segment); }
-        if (f.genre != null) { sql.append(" AND tx.genre = ?"); params.add(f.genre); }
-        if (f.city != null) { sql.append(" AND v.city = ?"); params.add(f.city); }
-        if (f.start != null) { sql.append(" AND p.dateTime >= ?"); params.add(f.start); }
-        if (f.end != null) { sql.append(" AND p.dateTime < ?"); params.add(f.end); }
+        if (f.segment != null) {
+            sql.append(" AND tx.segment = ?");
+            params.add(f.segment);
+        }
+        if (f.genre != null) {
+            sql.append(" AND tx.genre = ?");
+            params.add(f.genre);
+        }
+        if (f.city != null) {
+            sql.append(" AND v.city = ?");
+            params.add(f.city);
+        }
+        if (f.start != null) {
+            sql.append(" AND p.dateTime >= ?");
+            params.add(f.start);
+        }
+        if (f.end != null) {
+            sql.append(" AND p.dateTime < ?");
+            params.add(f.end);
+        }
         // Filters on the specific section contributing to this row (not just
         // "does the venue have one somewhere"), so price/availability
         // aggregates only reflect matching sections.
-        if (f.reservedSeating != null) { sql.append(" AND sec.isReservedSeating = ?"); params.add(f.reservedSeating); }
+        if (f.reservedSeating != null) {
+            sql.append(" AND sec.isReservedSeating = ?");
+            params.add(f.reservedSeating);
+        }
         if (f.lat != null && f.lon != null) {
             sql.append(" AND ST_Distance_Sphere(POINT(v.longitude, v.latitude), POINT(?, ?)) / 1000 <= ?");
-            params.add(f.lon); params.add(f.lat); params.add(f.radiusKm != null ? f.radiusKm : DEFAULT_RADIUS_KM);
+            params.add(f.lon);
+            params.add(f.lat);
+            params.add(f.radiusKm != null ? f.radiusKm : DEFAULT_RADIUS_KM);
         }
         sql.append(" GROUP BY p.performanceId, p.name, e.title, v.name, v.city, p.dateTime");
-        if (f.minAvailable != null) { sql.append(" HAVING SUM(sa.availableSeatCount) >= ?"); params.add(f.minAvailable); }
-        if (f.minPrice != null) { sql.append(f.minAvailable == null ? " HAVING" : " AND").append(" MIN(pt.price) >= ?"); params.add(f.minPrice); }
-        if (f.maxPrice != null) { sql.append((f.minAvailable == null && f.minPrice == null) ? " HAVING" : " AND").append(" MIN(pt.price) <= ?"); params.add(f.maxPrice); }
+        if (f.minAvailable != null) {
+            sql.append(" HAVING SUM(sa.availableSeatCount) >= ?");
+            params.add(f.minAvailable);
+        }
+        if (f.minPrice != null) {
+            sql.append(f.minAvailable == null ? " HAVING" : " AND").append(" MIN(pt.price) >= ?");
+            params.add(f.minPrice);
+        }
+        if (f.maxPrice != null) {
+            sql.append((f.minAvailable == null && f.minPrice == null) ? " HAVING" : " AND").append(" MIN(pt.price) <= ?");
+            params.add(f.maxPrice);
+        }
         sql.append(" ORDER BY p.dateTime, cheapestPrice");
 
         try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-            for (int i=0;i<params.size();i++) ps.setObject(i+1, params.get(i));
-            try (ResultSet rs=ps.executeQuery()) {
+            for (int i = 0; i < params.size(); i++) {
+                ps.setObject(i + 1, params.get(i));
+            }
+            try (ResultSet rs = ps.executeQuery()) {
                 System.out.printf("%-5s %-28s %-32s %-18s %-25s %10s %10s%n", "ID", "Performance", "Venue", "City", "Date", "From $", "Available");
                 System.out.println("-".repeat(134));
-                while(rs.next()) System.out.printf("%-5d %-28s %-32s %-18s %-25s %10.2f %10d%n", rs.getInt(1),rs.getString(2),rs.getString(4),rs.getString(5),rs.getTimestamp(6),rs.getDouble(7),rs.getInt(8));
+                while (rs.next()) {
+                    System.out.printf("%-5d %-28s %-32s %-18s %-25s %10.2f %10d%n",
+                        rs.getInt(1), rs.getString(2), rs.getString(4), rs.getString(5), rs.getTimestamp(6), rs.getDouble(7), rs.getInt(8));
+                }
             }
-        } catch(SQLException e) { throw new RuntimeException("Search failed.", e); }
+        } catch (SQLException e) {
+            throw new RuntimeException("Search failed.", e);
+        }
     }
 
     /**

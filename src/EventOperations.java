@@ -115,7 +115,9 @@ public class EventOperations {
                 "SELECT artistId FROM Artists WHERE name = ? ORDER BY artistId LIMIT 1")) {
             find.setString(1, name.trim());
             try (ResultSet rs = find.executeQuery()) {
-                if (rs.next()) return rs.getInt(1);
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
             }
         } catch (SQLException e) {
             throw new RuntimeException("Unable to look up artist.", e);
@@ -125,7 +127,9 @@ public class EventOperations {
             insert.setString(1, name.trim());
             insert.executeUpdate();
             try (ResultSet keys = insert.getGeneratedKeys()) {
-                if (keys.next()) return keys.getInt(1);
+                if (keys.next()) {
+                    return keys.getInt(1);
+                }
             }
         } catch (SQLException e) {
             throw new RuntimeException("Unable to create artist.", e);
@@ -222,22 +226,30 @@ public class EventOperations {
         try {
             conn.setAutoCommit(false);
             try (PreparedStatement statement = conn.prepareStatement(sql)) {
-            for (Map.Entry<Integer, Integer> entry : sectionToTierMap.entrySet()) {
-                int sectionId = entry.getKey();
-                int tierId = entry.getValue();
-                statement.setInt(1, sectionId);
-                statement.setInt(2, performanceId);
-                statement.setInt(3, tierId);
-                statement.addBatch();
-            }
-            statement.executeBatch();
+                for (Map.Entry<Integer, Integer> entry : sectionToTierMap.entrySet()) {
+                    int sectionId = entry.getKey();
+                    int tierId = entry.getValue();
+                    statement.setInt(1, sectionId);
+                    statement.setInt(2, performanceId);
+                    statement.setInt(3, tierId);
+                    statement.addBatch();
+                }
+                statement.executeBatch();
             }
             conn.commit();
         } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) { }
+            try {
+                conn.rollback();
+            } catch (SQLException ignored) {
+                // Best-effort rollback -- nothing further to do if this itself fails.
+            }
             throw new RuntimeException("Failed to assign sections to tiers: " + e.getMessage(), e);
         } finally {
-            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // Best-effort restore.
+            }
         }
     }
 
@@ -258,7 +270,6 @@ public class EventOperations {
         } catch (SQLException e) {
             throw new RuntimeException("Failed to set resale cap: " + e.getMessage(), e);
         }
-        
     }
 
     // Update PriceTiers.price for a tier, but only if no ticket has been sold
@@ -332,10 +343,18 @@ public class EventOperations {
             conn.commit();
             return true; // Seat successfully blocked
         } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) { }
+            try {
+                conn.rollback();
+            } catch (SQLException ignored) {
+                // Best-effort rollback -- nothing further to do if this itself fails.
+            }
             throw new RuntimeException("Failed to block seat.", e);
         } finally {
-            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // Best-effort restore.
+            }
         }
     }
 
@@ -358,33 +377,44 @@ public class EventOperations {
         try {
             conn.setAutoCommit(false);
             try (PreparedStatement updatePerformanceStmt = conn.prepareStatement(updatePerformanceSql)) {
-            updatePerformanceStmt.setInt(1, performanceId);
-            int rowsAffected = updatePerformanceStmt.executeUpdate();
-            if (rowsAffected == 0) {
-                throw new IllegalArgumentException("Performance does not exist or has already been cancelled.");
-            }
+                updatePerformanceStmt.setInt(1, performanceId);
+                int rowsAffected = updatePerformanceStmt.executeUpdate();
+                if (rowsAffected == 0) {
+                    throw new IllegalArgumentException("Performance does not exist or has already been cancelled.");
+                }
             }
             try (PreparedStatement refund = conn.prepareStatement(
                      "INSERT INTO Refunds (ticketId, paymentId, amount, reason) " +
                      "SELECT t.ticketId, o.paymentId, t.price, 'Organizer cancellation' " +
                      "FROM Tickets t JOIN Orders o ON o.orderId = t.orderId " +
-                     "WHERE t.performanceId = ? AND t.status = 'Active'" );
+                     "WHERE t.performanceId = ? AND t.status = 'Active'");
                  PreparedStatement withdraw = conn.prepareStatement(
                      "UPDATE ResaleListings rl JOIN Tickets t ON t.ticketId = rl.ticketId " +
                      "SET rl.status = 'Withdrawn' WHERE t.performanceId = ? AND rl.status = 'Active'");
                  PreparedStatement tickets = conn.prepareStatement(
                      "UPDATE Tickets SET status = 'Cancelled by organizer', cancelledAt = NOW() " +
                      "WHERE performanceId = ? AND status = 'Active'")) {
-                refund.setInt(1, performanceId); refund.executeUpdate();
-                withdraw.setInt(1, performanceId); withdraw.executeUpdate();
-                tickets.setInt(1, performanceId); tickets.executeUpdate();
+                refund.setInt(1, performanceId);
+                refund.executeUpdate();
+                withdraw.setInt(1, performanceId);
+                withdraw.executeUpdate();
+                tickets.setInt(1, performanceId);
+                tickets.executeUpdate();
             }
             conn.commit();
         } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) { }
+            try {
+                conn.rollback();
+            } catch (SQLException ignored) {
+                // Best-effort rollback -- nothing further to do if this itself fails.
+            }
             throw new RuntimeException("Failed to cancel performance.", e);
         } finally {
-            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // Best-effort restore.
+            }
         }
     }
 }

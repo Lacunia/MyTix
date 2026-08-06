@@ -19,7 +19,9 @@ public class ResaleOperations {
     // Insert into ResaleListings. Ticket must be owned by this customer, Active,
     // and for a performance that hasn't happened yet (and hasn't been cancelled).
     public boolean listTicketForResale(int ticketId, int sellerId, double askingPrice) {
-        if (askingPrice < 0) throw new IllegalArgumentException("Resale price cannot be negative.");
+        if (askingPrice < 0) {
+            throw new IllegalArgumentException("Resale price cannot be negative.");
+        }
         String sql =
             "INSERT INTO ResaleListings (ticketId, sellerId, resalePrice) " +
             "SELECT t.ticketId, ?, ? FROM Tickets t " +
@@ -28,7 +30,10 @@ public class ResaleOperations {
             "AND p.status = 'Scheduled' AND p.dateTime > NOW() " +
             "AND NOT EXISTS (SELECT 1 FROM ResaleListings rl WHERE rl.ticketId = t.ticketId AND rl.status = 'Active')";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setInt(1, sellerId); ps.setDouble(2, askingPrice); ps.setInt(3, ticketId); ps.setInt(4, sellerId);
+            ps.setInt(1, sellerId);
+            ps.setDouble(2, askingPrice);
+            ps.setInt(3, ticketId);
+            ps.setInt(4, sellerId);
             return ps.executeUpdate() == 1;
         } catch (SQLException e) {
             throw new RuntimeException("Unable to create resale listing (it may exceed the event cap).", e);
@@ -39,9 +44,14 @@ public class ResaleOperations {
     public void withdrawListing(int listingId, int sellerId) {
         try (PreparedStatement ps = conn.prepareStatement(
                 "UPDATE ResaleListings SET status = 'Withdrawn' WHERE listingId = ? AND sellerId = ? AND status = 'Active'")) {
-            ps.setInt(1, listingId); ps.setInt(2, sellerId);
-            if (ps.executeUpdate() != 1) throw new IllegalArgumentException("Active listing not found for this seller.");
-        } catch (SQLException e) { throw new RuntimeException("Unable to withdraw listing.", e); }
+            ps.setInt(1, listingId);
+            ps.setInt(2, sellerId);
+            if (ps.executeUpdate() != 1) {
+                throw new IllegalArgumentException("Active listing not found for this seller.");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Unable to withdraw listing.", e);
+        }
     }
 
     // Transfer ownership: update Tickets.currentOwnerId, insert a row into
@@ -50,9 +60,12 @@ public class ResaleOperations {
         try {
             conn.setAutoCommit(false);
             if (!ValidationUtils.paymentBelongsToCustomer(conn, paymentId, buyerId)) {
-                conn.rollback(); return false;
+                conn.rollback();
+                return false;
             }
-            int ticketId, sellerId;
+
+            int ticketId;
+            int sellerId;
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT rl.ticketId, rl.sellerId FROM ResaleListings rl " +
                     "JOIN Tickets t ON t.ticketId = rl.ticketId " +
@@ -61,29 +74,60 @@ public class ResaleOperations {
                     "AND p.status = 'Scheduled' AND p.dateTime > NOW() FOR UPDATE")) {
                 ps.setInt(1, listingId);
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) { conn.rollback(); return false; }
-                    ticketId = rs.getInt("ticketId"); sellerId = rs.getInt("sellerId");
+                    if (!rs.next()) {
+                        conn.rollback();
+                        return false;
+                    }
+                    ticketId = rs.getInt("ticketId");
+                    sellerId = rs.getInt("sellerId");
                 }
             }
-            if (sellerId == buyerId) { conn.rollback(); return false; }
+
+            if (sellerId == buyerId) {
+                conn.rollback();
+                return false;
+            }
+
             try (PreparedStatement ownership = conn.prepareStatement(
-                    "UPDATE Tickets SET currentOwnerId = ? WHERE ticketId = ? AND currentOwnerId = ? AND status = 'Active'" );
+                    "UPDATE Tickets SET currentOwnerId = ? WHERE ticketId = ? AND currentOwnerId = ? AND status = 'Active'");
                  PreparedStatement history = conn.prepareStatement(
                     "INSERT INTO TicketOwnershipHistory (ticketId, sellerId, buyerId, transactionPrice) " +
-                    "SELECT ticketId, sellerId, ?, resalePrice FROM ResaleListings WHERE listingId = ?" );
+                    "SELECT ticketId, sellerId, ?, resalePrice FROM ResaleListings WHERE listingId = ?");
                  PreparedStatement sold = conn.prepareStatement(
                     "UPDATE ResaleListings SET status = 'Sold' WHERE listingId = ? AND status = 'Active'")) {
-                ownership.setInt(1, buyerId); ownership.setInt(2, ticketId); ownership.setInt(3, sellerId);
-                if (ownership.executeUpdate() != 1) { conn.rollback(); return false; }
-                history.setInt(1, buyerId); history.setInt(2, listingId); history.executeUpdate();
-                sold.setInt(1, listingId); if (sold.executeUpdate() != 1) throw new SQLException("Listing changed during purchase.");
+                ownership.setInt(1, buyerId);
+                ownership.setInt(2, ticketId);
+                ownership.setInt(3, sellerId);
+                if (ownership.executeUpdate() != 1) {
+                    conn.rollback();
+                    return false;
+                }
+
+                history.setInt(1, buyerId);
+                history.setInt(2, listingId);
+                history.executeUpdate();
+
+                sold.setInt(1, listingId);
+                if (sold.executeUpdate() != 1) {
+                    throw new SQLException("Listing changed during purchase.");
+                }
             }
-            conn.commit(); return true;
+
+            conn.commit();
+            return true;
         } catch (SQLException e) {
-            try { conn.rollback(); } catch (SQLException ignored) { }
+            try {
+                conn.rollback();
+            } catch (SQLException ignored) {
+                // Best-effort rollback -- nothing further to do if this itself fails.
+            }
             throw new RuntimeException("Unable to purchase listing.", e);
         } finally {
-            try { conn.setAutoCommit(true); } catch (SQLException ignored) { }
+            try {
+                conn.setAutoCommit(true);
+            } catch (SQLException ignored) {
+                // Best-effort restore.
+            }
         }
     }
 }

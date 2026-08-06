@@ -349,7 +349,9 @@ public class BookingOperations {
                      "INSERT INTO Refunds (ticketId, paymentId, amount, reason) VALUES (?, ?, ?, 'Customer cancellation')")) {
                 for (CancelledTicket ticket : cancellable) {
                     cancel.setInt(1, ticket.ticketId);
-                    if (cancel.executeUpdate() != 1) throw new SQLException("Ticket cancellation race detected.");
+                    if (cancel.executeUpdate() != 1) {
+                        throw new SQLException("Ticket cancellation race detected.");
+                    }
                     withdraw.setInt(1, ticket.ticketId);
                     withdraw.executeUpdate();
                     refund.setInt(1, ticket.ticketId);
